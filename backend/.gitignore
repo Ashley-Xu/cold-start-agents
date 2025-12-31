@@ -1,0 +1,26 @@
+# Environment variables
+.env
+
+# Uploads directory
+uploads/
+
+# Deno cache
+.deno/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Claude
+.claude/

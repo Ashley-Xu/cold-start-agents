@@ -1,0 +1,29 @@
+{
+  "tasks": {
+    "dev": "deno run --watch --allow-net --allow-read --allow-env --allow-write --allow-sys --allow-run=ffmpeg,ffprobe --env-file=.env main.ts",
+    "start": "deno run --allow-net --allow-read --allow-env --allow-write --allow-sys --allow-run=ffmpeg,ffprobe --env-file=.env main.ts",
+    "test": "deno test --allow-net --allow-read --allow-env --allow-sys --env-file=.env",
+    "neo4j:start": "docker-compose up -d",
+    "neo4j:stop": "docker-compose down",
+    "neo4j:logs": "docker-compose logs -f neo4j"
+  },
+  "imports": {
+    "openai": "npm:openai@^6.15.0",
+    "neo4j-driver": "npm:neo4j-driver@^6.0.1",
+    "zod": "npm:zod@^3.23.8"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.window", "deno.unstable"]
+  },
+  "fmt": {
+    "indentWidth": 2,
+    "lineWidth": 80,
+    "semiColons": true
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
