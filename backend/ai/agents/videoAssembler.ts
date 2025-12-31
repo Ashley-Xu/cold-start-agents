@@ -13,6 +13,9 @@ import type {
   VideoAssemblerInput,
   VideoAssemblerOutput,
   VideoScene,
+  WordTimestamp,
+  Transcript,
+  Language,
 } from "../../lib/types.ts";
 
 // ============================================================================
@@ -44,12 +47,32 @@ export const VideoAssemblerInputSchema = z.object({
 });
 
 /**
+ * Word timestamp schema
+ */
+export const WordTimestampSchema = z.object({
+  word: z.string().describe("Word text"),
+  start: z.number().min(0).describe("Start time in seconds"),
+  end: z.number().min(0).describe("End time in seconds"),
+});
+
+/**
+ * Transcript schema with word-level timestamps
+ */
+export const TranscriptSchema = z.object({
+  text: z.string().describe("Full transcript text"),
+  words: z.array(WordTimestampSchema).describe("Word-level timestamps"),
+  language: z.enum(["zh", "en", "fr"]).describe("Language"),
+  duration: z.number().min(0).describe("Total duration in seconds"),
+});
+
+/**
  * Output schema for Video Assembler
  */
 export const VideoAssemblerOutputSchema = z.object({
   videoUrl: z.string().url().describe("Final video URL"),
   audioUrl: z.string().url().describe("Generated TTS audio URL"),
   subtitlesUrl: z.string().url().optional().describe("Subtitles file URL (SRT)"),
+  transcript: TranscriptSchema.describe("Word-level transcript with timestamps"),
   duration: z.number().min(0).describe("Actual video duration in seconds"),
   fileSize: z.number().min(0).describe("File size in bytes"),
   cost: z.number().min(0).describe("Total generation cost in USD"),
@@ -62,21 +85,23 @@ export const VideoAssemblerOutputSchema = z.object({
 // ============================================================================
 
 /**
- * Generate TTS audio with ElevenLabs
+ * Generate TTS audio with ElevenLabs (with word-level timestamps)
  *
- * NOTE: This is a placeholder implementation. Real implementation requires:
- * 1. ElevenLabs API key in environment
- * 2. Voice ID selection based on language
- * 3. Audio file upload to storage
+ * Uses ElevenLabs API with timestamps to get word-level timing data.
  *
  * @param text - Narration text
  * @param language - Target language (zh/en/fr)
- * @returns Audio URL and cost
+ * @returns Audio URL, cost, duration, and word-level timestamps
  */
 async function generateTTS(
   text: string,
   language: "zh" | "en" | "fr",
-): Promise<{ audioUrl: string; cost: number; duration: number }> {
+): Promise<{
+  audioUrl: string;
+  cost: number;
+  duration: number;
+  words: WordTimestamp[];
+}> {
   console.log(`🎤 Generating TTS for ${text.length} characters (${language})...`);
 
   const characterCount = text.length;
@@ -112,46 +137,105 @@ async function generateTTS(
 
     await command.output();
 
+    // Generate placeholder word timestamps
+    const words = text.split(/\s+/).map((word, idx) => ({
+      word,
+      start: idx * 0.5,
+      end: (idx + 1) * 0.5,
+    }));
+
     return {
       audioUrl: audioPath,
       cost,
       duration: 30,
+      words,
     };
   }
 
   try {
-    // Call ElevenLabs API
+    // Call ElevenLabs API with timestamps endpoint
+    console.log(`  Calling ElevenLabs API with voice ${voiceId}...`);
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`,
       {
         method: "POST",
         headers: {
-          "Accept": "audio/mpeg",
+          "Accept": "application/json",
           "Content-Type": "application/json",
           "xi-api-key": apiKey,
         },
         body: JSON.stringify({
           text,
-          model_id: "eleven_monolingual_v1",
+          model_id: "eleven_multilingual_v2",
           voice_settings: {
             stability: 0.5,
-            similarity_boost: 0.5,
+            similarity_boost: 0.75,
+            style: 0.0,
+            use_speaker_boost: true,
           },
         }),
       }
     );
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`ElevenLabs API error: ${response.status} - ${errorText}`);
       throw new Error(`ElevenLabs API error: ${response.status}`);
     }
 
-    // Save audio file
+    // Parse response (includes audio_base64 and alignment data)
+    const result = await response.json();
+
+    // Save audio file from base64
     const uploadsDir = "./uploads";
     await Deno.mkdir(uploadsDir, { recursive: true });
     const audioPath = `${uploadsDir}/audio_${Date.now()}.mp3`;
 
-    const audioData = await response.arrayBuffer();
-    await Deno.writeFile(audioPath, new Uint8Array(audioData));
+    // Decode base64 audio
+    const audioData = Uint8Array.from(atob(result.audio_base64), c => c.charCodeAt(0));
+    await Deno.writeFile(audioPath, audioData);
+
+    // Parse word-level timestamps from alignment data
+    const words: WordTimestamp[] = [];
+
+    if (result.alignment && result.alignment.characters) {
+      // ElevenLabs returns character-level timestamps, we need to reconstruct words
+      const chars = result.alignment.characters;
+      const charStarts = result.alignment.character_start_times_seconds;
+      const charEnds = result.alignment.character_end_times_seconds;
+
+      let currentWord = "";
+      let wordStart = 0;
+
+      for (let i = 0; i < chars.length; i++) {
+        const char = chars[i];
+
+        if (char === " " || i === chars.length - 1) {
+          // End of word (or end of text)
+          if (i === chars.length - 1 && char !== " ") {
+            currentWord += char;
+          }
+
+          if (currentWord.length > 0) {
+            words.push({
+              word: currentWord,
+              start: wordStart,
+              end: charEnds[i === chars.length - 1 ? i : i - 1],
+            });
+            currentWord = "";
+          }
+
+          if (i < chars.length - 1) {
+            wordStart = charStarts[i + 1];
+          }
+        } else {
+          if (currentWord.length === 0) {
+            wordStart = charStarts[i];
+          }
+          currentWord += char;
+        }
+      }
+    }
 
     // Get audio duration using FFmpeg
     const probeCommand = new Deno.Command("ffprobe", {
@@ -167,12 +251,13 @@ async function generateTTS(
     const { stdout } = await probeCommand.output();
     const duration = parseFloat(new TextDecoder().decode(stdout).trim());
 
-    console.log(`✅ TTS generated: ${Math.ceil(duration)}s, cost=$${cost.toFixed(4)}`);
+    console.log(`✅ TTS generated: ${Math.ceil(duration)}s, ${words.length} words, cost=$${cost.toFixed(4)}`);
 
     return {
       audioUrl: audioPath,
       cost,
       duration: Math.ceil(duration),
+      words,
     };
   } catch (error) {
     console.error("Error generating TTS:", error);
@@ -197,10 +282,18 @@ async function generateTTS(
 
     await command.output();
 
+    // Generate placeholder word timestamps
+    const words = text.split(/\s+/).map((word, idx) => ({
+      word,
+      start: idx * 0.5,
+      end: (idx + 1) * 0.5,
+    }));
+
     return {
       audioUrl: audioPath,
       cost,
       duration: 30,
+      words,
     };
   }
 }
@@ -343,7 +436,7 @@ async function assembleVideoWithFFmpeg(
   try {
     // Download assets to temp directory and check dimensions
     const imageFiles: string[] = [];
-    const imageDimensions: Array<{ width: number; height: number }> = [];
+    const imageDimensions: Array<{ width: number; height: number; rotation: number }> = [];
 
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
@@ -354,27 +447,35 @@ async function assembleVideoWithFFmpeg(
       const imageData = await response.arrayBuffer();
       await Deno.writeFile(imagePath, new Uint8Array(imageData));
 
-      // Get image dimensions using ffprobe
+      // Get image dimensions AND orientation using ffprobe
       const probeCommand = new Deno.Command("ffprobe", {
         args: [
           "-v", "error",
           "-select_streams", "v:0",
-          "-show_entries", "stream=width,height",
-          "-of", "csv=s=x:p=0",
+          "-show_entries", "stream=width,height:stream_tags=rotate",
+          "-of", "json",
           imagePath
         ],
         stdout: "piped",
       });
 
       const { stdout } = await probeCommand.output();
-      const dimensions = new TextDecoder().decode(stdout).trim().split("x");
-      const width = parseInt(dimensions[0]);
-      const height = parseInt(dimensions[1]);
+      const probeData = JSON.parse(new TextDecoder().decode(stdout));
+      const stream = probeData.streams[0];
 
-      imageDimensions.push({ width, height });
+      let width = stream.width;
+      let height = stream.height;
+      const rotation = stream.tags?.rotate ? parseInt(stream.tags.rotate) : 0;
+
+      // Swap dimensions if image is rotated 90 or 270 degrees
+      if (rotation === 90 || rotation === 270) {
+        [width, height] = [height, width];
+      }
+
+      imageDimensions.push({ width, height, rotation });
       imageFiles.push(imagePath);
 
-      console.log(`  Scene ${i + 1} dimensions: ${width}x${height} (${width > height ? 'horizontal' : 'vertical'})`);
+      console.log(`  Scene ${i + 1} dimensions: ${width}x${height} (${width > height ? 'horizontal' : 'vertical'}), rotation: ${rotation}°`);
     }
 
     // Build FFmpeg input arguments for all images
@@ -404,8 +505,21 @@ async function assembleVideoWithFFmpeg(
       // Build filter chain
       let filter = `[${i}:v]`;
 
-      // Step 1: Rotate horizontal images to vertical (90 degrees clockwise)
-      if (isHorizontal) {
+      // Step 1: Apply rotation based on EXIF metadata
+      if (dims.rotation === 90) {
+        filter += `transpose=1,`; // 1 = 90 degrees clockwise
+        console.log(`  Applying EXIF rotation: 90° clockwise for scene ${i + 1}`);
+      } else if (dims.rotation === 180) {
+        filter += `transpose=1,transpose=1,`; // Two 90° rotations = 180°
+        console.log(`  Applying EXIF rotation: 180° for scene ${i + 1}`);
+      } else if (dims.rotation === 270) {
+        filter += `transpose=2,`; // 2 = 90 degrees counter-clockwise
+        console.log(`  Applying EXIF rotation: 270° for scene ${i + 1}`);
+      }
+
+      // Step 2: Rotate horizontal images to vertical (90 degrees clockwise)
+      // Only if no rotation was applied AND image is horizontal
+      if (dims.rotation === 0 && isHorizontal) {
         filter += `transpose=1,`; // 1 = 90 degrees clockwise
         console.log(`  Rotating scene ${i + 1} from horizontal to vertical`);
       }
@@ -548,16 +662,26 @@ export async function assembleVideo(
     `🎥 Assembling video ${validatedInput.videoId} (${validatedInput.language}, ${validatedInput.duration}s)...`,
   );
 
-  // Step 1: Generate TTS audio
-  console.log(`\n1️⃣ Generating TTS audio...`);
+  // Step 1: Generate TTS audio with word-level timestamps
+  console.log(`\n1️⃣ Generating TTS audio with word-level timestamps...`);
   const fullNarration = validatedInput.scenes
     .map((s) => s.narration)
     .join(" ");
 
   const ttsResult = await generateTTS(fullNarration, validatedInput.language);
-  console.log(`✅ TTS generated: ${ttsResult.duration}s, cost=$${ttsResult.cost.toFixed(4)}`);
+  console.log(`✅ TTS generated: ${ttsResult.duration}s, ${ttsResult.words.length} words, cost=$${ttsResult.cost.toFixed(4)}`);
 
-  // Step 2: Generate subtitles
+  // Step 2: Create transcript object with word-level timestamps
+  const transcript: Transcript = {
+    text: fullNarration,
+    words: ttsResult.words,
+    language: validatedInput.language,
+    duration: ttsResult.duration,
+  };
+
+  console.log(`\n📝 Transcript created with ${transcript.words.length} word timestamps`);
+
+  // Step 3: Generate subtitles (SRT format)
   console.log(`\n2️⃣ Generating subtitles...`);
   const srtContent = generateSubtitles(validatedInput.scenes);
 
@@ -569,7 +693,7 @@ export async function assembleVideo(
 
   console.log(`✅ Subtitles generated (${srtContent.length} chars)`);
 
-  // Step 3: Assemble video with FFmpeg
+  // Step 4: Assemble video with FFmpeg
   console.log(`\n3️⃣ Assembling video with FFmpeg...`);
   const videoResult = await assembleVideoWithFFmpeg(
     validatedInput.scenes,
@@ -578,7 +702,7 @@ export async function assembleVideo(
   );
   console.log(`✅ Video assembled: ${videoResult.duration}s, ${(videoResult.fileSize / 1024 / 1024).toFixed(2)}MB`);
 
-  // Step 4: Calculate total cost
+  // Step 5: Calculate total cost
   const totalCost = ttsResult.cost; // FFmpeg is free
   console.log(`\n💰 Total cost: $${totalCost.toFixed(4)}`);
 
@@ -586,6 +710,7 @@ export async function assembleVideo(
     videoUrl: videoResult.videoUrl,
     audioUrl: ttsResult.audioUrl,
     subtitlesUrl: subtitlesPath,
+    transcript, // Include word-level transcript
     duration: videoResult.duration,
     fileSize: videoResult.fileSize,
     cost: totalCost,

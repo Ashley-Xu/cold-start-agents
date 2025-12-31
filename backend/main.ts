@@ -569,6 +569,23 @@ async function handler(req: Request): Promise<Response> {
         const videoProps = videoNode.properties;
         const analysisProps = analysisNode.properties;
 
+        // Delete old script if regenerating
+        const existingScript = await session.run(
+          `MATCH (v:VideoProject {id: $videoId})-[:HAS_SCRIPT]->(s:Script)
+           RETURN s`,
+          { videoId }
+        );
+
+        if (existingScript.records.length > 0) {
+          console.log(`🗑️  Deleting old script before regeneration...`);
+          await session.run(
+            `MATCH (v:VideoProject {id: $videoId})-[:HAS_SCRIPT]->(s:Script)
+             OPTIONAL MATCH (s)-[:HAS_SCENE]->(sc:SceneScript)
+             DETACH DELETE s, sc`,
+            { videoId }
+          );
+        }
+
         // Prepare input for Script Writer Agent
         const scriptInput: ScriptWriterInput = {
           concept: analysisProps.concept,
@@ -794,12 +811,24 @@ async function handler(req: Request): Promise<Response> {
           sceneNode.properties
         );
 
-        // Check if video is in correct status
-        if (videoProps.status !== "script_approved") {
+        // Check if video is in correct status (allow regeneration from later stages)
+        const validStatuses = ["script_approved", "storyboard_review", "storyboard_approved", "assets_review", "assets_approved", "rendering", "complete"];
+        if (!validStatuses.includes(videoProps.status)) {
           return errorResponse(
-            `Cannot create storyboard. Video status is '${videoProps.status}' but must be 'script_approved'`,
+            `Cannot create storyboard. Video status is '${videoProps.status}' but must be one of: ${validStatuses.join(", ")}`,
             400,
             "INVALID_STATUS",
+          );
+        }
+
+        // Delete old storyboard if regenerating
+        if (videoProps.status !== "script_approved") {
+          console.log(`🗑️  Deleting old storyboard before regeneration...`);
+          await session.run(
+            `MATCH (v:VideoProject {id: $videoId})-[:HAS_STORYBOARD]->(sb:Storyboard)
+             OPTIONAL MATCH (sb)-[:HAS_SCENE]->(sc:StoryboardScene)
+             DETACH DELETE sb, sc`,
+            { videoId }
           );
         }
 
@@ -1064,12 +1093,23 @@ async function handler(req: Request): Promise<Response> {
           sceneNode.properties
         );
 
-        // Check if video is in correct status
-        if (videoProps.status !== "storyboard_approved") {
+        // Check if video is in correct status (allow regeneration from later stages)
+        const validStatuses = ["storyboard_approved", "assets_review", "assets_approved", "rendering", "complete"];
+        if (!validStatuses.includes(videoProps.status)) {
           return errorResponse(
-            `Cannot generate assets. Video status is '${videoProps.status}' but must be 'storyboard_approved'`,
+            `Cannot generate assets. Video status is '${videoProps.status}' but must be one of: ${validStatuses.join(", ")}`,
             400,
             "INVALID_STATUS",
+          );
+        }
+
+        // If regenerating, delete old assets first
+        if (videoProps.status !== "storyboard_approved") {
+          console.log(`🗑️  Deleting old assets before regeneration...`);
+          await session.run(
+            `MATCH (v:VideoProject {id: $videoId})-[:HAS_ASSET]->(a:Asset)
+             DETACH DELETE a`,
+            { videoId },
           );
         }
 

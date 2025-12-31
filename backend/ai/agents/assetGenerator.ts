@@ -169,10 +169,13 @@ async function generateImageAsset(
   const sceneId = `scene-${scene.order}`;
 
   try {
+    // Enhance prompt to ensure correct vertical orientation
+    const orientedPrompt = `${scene.imagePrompt}. IMPORTANT: Create a VERTICAL PORTRAIT composition (9:16 aspect ratio) where subjects are upright and properly oriented for vertical viewing. The scene should be naturally composed for vertical/portrait orientation.`;
+
     // Call DALL-E 3 API
     const response = await openai.images.generate({
       model: "dall-e-3",
-      prompt: scene.imagePrompt,
+      prompt: orientedPrompt,
       n: 1,
       size: "1024x1792", // Vertical format for TikTok/Reels (9:16 aspect ratio)
       quality: "standard", // or "hd" for premium

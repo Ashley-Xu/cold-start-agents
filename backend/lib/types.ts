@@ -415,10 +415,26 @@ export interface VideoAssemblerInput {
   duration: 30 | 60 | 90;
 }
 
+// Word-level timestamp for transcript
+export interface WordTimestamp {
+  word: string;
+  start: number; // Start time in seconds
+  end: number; // End time in seconds
+}
+
+// Complete transcript with word-level timing
+export interface Transcript {
+  text: string; // Full transcript text
+  words: WordTimestamp[]; // Word-level timestamps
+  language: Language;
+  duration: number; // Total duration in seconds
+}
+
 export interface VideoAssemblerOutput {
   videoUrl: string;
   audioUrl: string;
   subtitlesUrl?: string;
+  transcript: Transcript; // Word-level transcript with timestamps
   duration: number;
   fileSize: number;
   cost: number;
