@@ -12,8 +12,9 @@ This project creates an automated video generation pipeline that produces short-
 
 **Key Features:**
 - 🤖 **5 AI Agents**: Story analysis, script writing, scene planning, asset generation, video assembly
-- 💰 **Cost-Optimized**: <$0.35 per video using DALL-E 3 + FFmpeg instead of expensive video APIs
-- 🎬 **Multi-Stage Approval**: Human oversight at script, storyboard, and asset stages
+- 🎬 **AI-Powered Animation**: MiniMax Hailuo-02 API for realistic character movement and camera motion
+- 💰 **Cost-Optimized**: ~$0.14 per video with DALL-E 3 + Hailuo animation (512p)
+- 🎥 **Multi-Stage Approval**: Human oversight at script, storyboard, and asset stages
 - 📊 **Asset Reuse**: Neo4j-powered similarity search saves ~30% on image generation costs
 - ⚡ **Parallel Processing**: 5-10 concurrent asset generations for speed
 - 📈 **Real-Time Cost Tracking**: Budget monitoring throughout the pipeline
@@ -28,6 +29,7 @@ This project creates an automated video generation pipeline that produces short-
 - **AI Framework**: Direct OpenAI SDK integration (not using Mastra)
 - **LLM**: GPT-4o-mini for planning and scripting
 - **Image Generation**: DALL-E 3
+- **Video Animation**: MiniMax Hailuo-02 API (image-to-video animation)
 - **Audio/TTS**: ElevenLabs API
 - **Video Assembly**: FFmpeg
 
@@ -70,8 +72,9 @@ cold-start-agents/
 - [Docker](https://www.docker.com/) (for Neo4j)
 - [Node.js](https://nodejs.org/) 18+ (for frontend)
 - [FFmpeg](https://ffmpeg.org/) (for video assembly)
-- OpenAI API key
-- ElevenLabs API key
+- OpenAI API key (for DALL-E 3 image generation)
+- MiniMax API key (for Hailuo-02 video animation) - Get at https://platform.minimax.io/
+- ElevenLabs API key (for TTS narration)
 
 ### Backend Setup
 
@@ -140,14 +143,21 @@ cold-start-agents/
 
 ### Cost Per Video
 
-- **Standard Pipeline** (DALL-E 3 + FFmpeg): ~$0.20-0.35 per video
+- **With Hailuo Animation** (DALL-E 3 + Hailuo 512p): ~$0.14 per video
   - Script generation: $0.0003
   - Storyboard planning: $0.0001
-  - Image generation (3-5 images): $0.12-0.20
+  - Image generation (2 scenes × $0.04): $0.08
+  - Video animation (2 scenes × $0.102): $0.20
   - TTS audio: $0.05-0.10
-  - Video assembly: Free (FFmpeg)
+  - Total: **~$0.33-0.38 per video**
 
-- **Monthly Budget**: 1000 videos × $0.30 avg = **~$300/month** ✅
+- **Without Animation** (static FFmpeg effects): ~$0.13-0.18 per video
+  - Image generation + TTS only
+  - Fallback when MiniMax API key not configured
+
+- **Monthly Budget**:
+  - 1000 videos with animation × $0.35 avg = **~$350/month**
+  - 2000 videos with animation × $0.35 avg = **~$700/month** (still under $1000 target!)
 
 ---
 
@@ -411,22 +421,22 @@ Total Cost: $0.16 per video
 - ✅ Generates scripts from topics
 - ✅ Creates professional storyboards
 - ✅ Generates DALL-E 3 images
+- ✅ **Animates images with AI** (MiniMax Hailuo-02 for character/object movement)
 - ✅ Adds voice narration (TTS)
-- ✅ Adds motion effects to images
+- ✅ Adds cinematic motion effects
 - ✅ Includes subtitles
 - ✅ Exports vertical videos (TikTok/Instagram ready)
 
 **What This System Doesn't Do (Yet):**
-- ❌ No real video clips (uses images + motion effects)
 - ❌ No background music (planned)
 - ❌ No custom voices (uses default TTS voices)
 - ❌ No video editing tools (fixed format)
 
 **Coming Soon:**
-- 🔜 Sora integration for real video clips (premium)
 - 🔜 Background music library
 - 🔜 Asset reuse to save 30% on costs
 - 🔜 Batch processing for multiple videos
+- 🔜 Higher resolution animation (768p, 1080p options)
 
 ---
 

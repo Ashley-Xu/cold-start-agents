@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import { openai, MODEL_CONFIG } from "../index.ts";
+import { generateAnimatedVideo } from "../tools/hailuoClient.ts";
 import type {
   AssetGeneratorInput,
   AssetGeneratorOutput,
@@ -36,9 +37,11 @@ export const AssetGeneratorInputSchema = z.object({
 export const GeneratedAssetSchema = z.object({
   sceneId: z.string().describe("Scene identifier (generated)"),
   type: z.enum(["image", "video_clip"]).describe("Asset type"),
-  url: z.string().url().describe("Asset URL from OpenAI"),
+  url: z.string().url().describe("Asset URL from OpenAI or Hailuo"),
   cost: z.number().min(0).describe("Generation cost in USD"),
   reused: z.boolean().describe("Whether asset was reused from library"),
+  animationProvider: z.enum(["hailuo", "static"]).optional().describe("Animation provider used"),
+  generationTime: z.number().optional().describe("Time taken to generate in seconds"),
 });
 
 /**
@@ -68,18 +71,18 @@ export async function generateAssets(
   const validatedInput = AssetGeneratorInputSchema.parse(input);
 
   console.log(
-    `🎨 Generating assets for ${validatedInput.scenes.length} scenes (Premium: ${validatedInput.isPremium})...`,
+    `🎨 Generating assets for ${validatedInput.scenes.length} scenes (Animation: Hailuo)...`,
   );
 
-  // Check if Sora API is available (requires invitation from OpenAI)
-  const soraAvailable = !!Deno.env.get("OPENAI_SORA_ENABLED");
+  // Check if Hailuo API is available
+  const hailuoAvailable = !!Deno.env.get("MINIMAX_API_KEY_PAY_AS_YOU_GO");
 
-  if (validatedInput.isPremium && !soraAvailable) {
+  if (!hailuoAvailable) {
     console.log(
-      "ℹ️  Premium mode requested, but Sora API access not enabled. Using DALL-E 3 for all assets.",
+      "ℹ️  MiniMax API key not found. All videos will use static FFmpeg effects.",
     );
     console.log(
-      "ℹ️  To enable Sora: Get API access from OpenAI and set OPENAI_SORA_ENABLED=true in .env",
+      "ℹ️  To enable Hailuo animation: Add MINIMAX_API_KEY_PAY_AS_YOU_GO to .env file",
     );
   }
 
@@ -88,14 +91,32 @@ export async function generateAssets(
     try {
       console.log(`  Generating asset ${idx + 1}/${validatedInput.scenes.length}...`);
 
-      // Use Sora for premium if available, otherwise DALL-E 3
-      const asset = validatedInput.isPremium && soraAvailable
-        ? await generateVideoAsset(scene)
-        : await generateImageAsset(scene);
+      // Step 1: Generate DALL-E image
+      const dalleImage = await generateImageAsset(scene);
 
-      console.log(`  ✓ Asset ${idx + 1} generated (${asset.url.substring(0, 50)}...)`);
-
-      return asset;
+      // Step 2: Try to animate with Hailuo (with fallback to static)
+      if (hailuoAvailable) {
+        try {
+          console.log(`  🎬 Animating scene ${idx + 1} with Hailuo...`);
+          const animatedAsset = await animateImageWithHailuo(dalleImage, scene);
+          console.log(`  ✓ Asset ${idx + 1} animated (${animatedAsset.url.substring(0, 50)}...)`);
+          return animatedAsset;
+        } catch (error) {
+          console.warn(`  ⚠️  Animation failed for scene ${idx + 1}, using static image:`, error);
+          // Fallback to static image with Ken Burns effect
+          return {
+            ...dalleImage,
+            animationProvider: "static" as const,
+          };
+        }
+      } else {
+        // No Hailuo API key, use static image
+        console.log(`  ✓ Asset ${idx + 1} generated (static) (${dalleImage.url.substring(0, 50)}...)`);
+        return {
+          ...dalleImage,
+          animationProvider: "static" as const,
+        };
+      }
     } catch (error) {
       console.error(`  ✗ Failed to generate asset ${idx + 1}:`, error);
       throw error;
@@ -285,6 +306,53 @@ async function generateVideoAsset(
 }
 
 // ============================================================================
+// Hailuo Animation Integration
+// ============================================================================
+
+/**
+ * Animate a DALL-E image using MiniMax Hailuo-02 API
+ *
+ * @param imageAsset - Generated DALL-E image asset
+ * @param scene - Scene with description for animation prompt
+ * @returns Animated video asset with Hailuo provider
+ */
+async function animateImageWithHailuo(
+  imageAsset: z.infer<typeof GeneratedAssetSchema>,
+  scene: z.infer<typeof AssetSceneSchema>,
+): Promise<z.infer<typeof GeneratedAssetSchema>> {
+  const startTime = Date.now();
+
+  // Create animation prompt from scene description
+  const animationPrompt = `${scene.description}. Animate with realistic movement, natural motion, and cinematic camera work.`;
+
+  console.log(`    🎬 Hailuo animation starting for scene ${scene.order}...`);
+
+  // Generate animated video (combines generation + polling)
+  const { videoUrl, generationTime } = await generateAnimatedVideo({
+    imageUrl: imageAsset.url,
+    prompt: animationPrompt,
+    resolution: "768p", // Cost-effective: $0.045/second (512p not supported)
+    duration: 6, // 6 seconds per scene
+  });
+
+  // Calculate cost: 768p = $0.045/second × 6 seconds = $0.270
+  const hailuoCost = 0.045 * 6;
+  const totalCost = imageAsset.cost + hailuoCost; // DALL-E + Hailuo
+
+  console.log(`    ✓ Animation complete in ${generationTime.toFixed(1)}s (cost: $${hailuoCost.toFixed(3)})`);
+
+  return {
+    sceneId: imageAsset.sceneId,
+    type: "video_clip",
+    url: videoUrl,
+    cost: totalCost,
+    reused: false,
+    animationProvider: "hailuo",
+    generationTime,
+  };
+}
+
+// ============================================================================
 // Asset Similarity Search (for reuse optimization)
 // ============================================================================
 
@@ -318,23 +386,23 @@ async function findSimilarAsset(
 // ============================================================================
 
 /**
- * Estimate cost for asset generation
+ * Estimate cost for asset generation with Hailuo animation
  *
  * @param sceneCount - Number of scenes
- * @param isPremium - Use Sora 2 (expensive) or DALL-E 3 (cheap)
+ * @param withAnimation - Include Hailuo animation cost (default: true)
  * @returns Estimated cost in USD
  */
-export function estimateAssetCost(sceneCount: number, isPremium: boolean): number {
-  if (isPremium) {
-    // Sora 2 Standard: $0.10/second
-    // Assume 10 seconds per scene for short-form content
-    // Cost: 10s × $0.10 = $1.00 per scene
-    const secondsPerScene = 10;
-    const pricePerSecond = 0.10; // Standard quality
-    return sceneCount * secondsPerScene * pricePerSecond;
+export function estimateAssetCost(sceneCount: number, withAnimation: boolean = true): number {
+  // DALL-E 3: $0.040 per image (1024x1792, standard quality)
+  const dalleeCost = sceneCount * 0.040;
+
+  if (withAnimation) {
+    // Hailuo 768p: $0.045/second × 6 seconds = $0.270 per scene
+    const hailuoCost = sceneCount * (0.045 * 6);
+    return dalleeCost + hailuoCost;
   } else {
-    // DALL-E 3: $0.040 per image (1024x1792, standard quality)
-    return sceneCount * 0.040;
+    // Static images only
+    return dalleeCost;
   }
 }
 

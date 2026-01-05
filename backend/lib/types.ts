@@ -204,7 +204,7 @@ export interface ApproveStoryboardResponse {
 
 export type AssetType = "image" | "video_clip" | "audio" | "music";
 
-export type AssetGenerator = "dalle3" | "sora" | "elevenlabs" | "library";
+export type AssetGenerator = "dalle3" | "sora" | "elevenlabs" | "library" | "hailuo";
 
 export interface Asset {
   id: string;
@@ -217,6 +217,8 @@ export interface Asset {
   embedding?: number[]; // Vector embedding for similarity search
   tags: string[];
   reuseCount: number;
+  animationProvider?: "hailuo" | "static"; // NEW - Track if animated with Hailuo or static fallback
+  generationTime?: number; // NEW - Track API latency in seconds
   createdAt: Date;
 }
 
@@ -396,6 +398,8 @@ export interface AssetGeneratorOutput {
     url: string;
     cost: number;
     reused: boolean;
+    animationProvider?: "hailuo" | "static"; // NEW - Track animation source
+    generationTime?: number; // NEW - Track generation latency
   }>;
 }
 

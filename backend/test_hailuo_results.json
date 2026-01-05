@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-01-05T19:58:56.283Z",
+  "totalTime": 130.831,
+  "totalCost": 0.62,
+  "animatedCount": 2,
+  "staticCount": 0,
+  "assets": [
+    {
+      "sceneId": "scene-1",
+      "type": "video_clip",
+      "url": "https://video-product.cdn.minimax.io/inference_output/video/2026-01-06/ba867df2-3cd9-447f-98fc-dc73091658b4/output.mp4",
+      "cost": 0.31,
+      "animationProvider": "hailuo",
+      "generationTime": 95.956
+    },
+    {
+      "sceneId": "scene-2",
+      "type": "video_clip",
+      "url": "https://video-product.cdn.minimax.io/inference_output/video/2026-01-06/093baaa9-66fc-46c3-a592-4dec9defe57e/output.mp4",
+      "cost": 0.31,
+      "animationProvider": "hailuo",
+      "generationTime": 105.033
+    }
+  ]
+}
