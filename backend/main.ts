@@ -694,10 +694,14 @@ async function handler(req: Request): Promise<Response> {
   ) {
     try {
       const videoId = path.split("/")[3];
+      console.log(`📝 Approve script request for video ${videoId}`);
+
       const body: ApproveScriptRequest = await req.json();
+      console.log(`   Request body:`, JSON.stringify(body));
 
       // Validate request body
       if (typeof body.approved !== "boolean") {
+        console.error(`   ❌ Invalid request body: approved is not a boolean`);
         return errorResponse(
           "Request body must include 'approved' boolean field",
           400,
@@ -715,6 +719,7 @@ async function handler(req: Request): Promise<Response> {
         );
 
         if (result.records.length === 0) {
+          console.error(`   ❌ Video or script not found`);
           return errorResponse(
             "Video or script not found",
             404,
@@ -724,16 +729,19 @@ async function handler(req: Request): Promise<Response> {
 
         const record = result.records[0];
         const videoProps = record.get("v").properties;
+        console.log(`   Current video status: ${videoProps.status}`);
 
         // Verify video is in correct status (or later - allow going back and re-approving)
         const validStatuses = ["script_review", "script_approved", "storyboard_review", "storyboard_approved", "assets_review", "assets_approved", "rendering", "complete"];
         if (!validStatuses.includes(videoProps.status)) {
+          console.error(`   ❌ Invalid status: ${videoProps.status} not in ${validStatuses.join(", ")}`);
           return errorResponse(
             `Cannot approve script. Video status is '${videoProps.status}' but must be one of: ${validStatuses.join(", ")}`,
             400,
             "INVALID_STATUS",
           );
         }
+        console.log(`   ✓ Status validation passed`);
 
         const now = new Date().toISOString();
 
@@ -957,10 +965,14 @@ async function handler(req: Request): Promise<Response> {
   ) {
     try {
       const videoId = path.split("/")[3];
+      console.log(`📋 Approve storyboard request for video ${videoId}`);
+
       const body: ApproveStoryboardRequest = await req.json();
+      console.log(`   Request body:`, JSON.stringify(body));
 
       // Validate request body
       if (typeof body.approved !== "boolean") {
+        console.error(`   ❌ Invalid request body: approved is not a boolean`);
         return errorResponse(
           "Request body must include 'approved' boolean field",
           400,
@@ -987,16 +999,20 @@ async function handler(req: Request): Promise<Response> {
 
         const record = result.records[0];
         const videoProps = record.get("v").properties;
+        console.log(`   Current video status: ${videoProps.status}`);
 
         // Verify video is in correct status (or later - allow going back and re-approving)
         const validStatuses = ["storyboard_review", "storyboard_approved", "assets_review", "assets_approved", "rendering", "complete"];
         if (!validStatuses.includes(videoProps.status)) {
+          console.error(`   ❌ Invalid status: ${videoProps.status} not in ${validStatuses.join(", ")}`);
           return errorResponse(
             `Cannot approve storyboard. Video status is '${videoProps.status}' but must be one of: ${validStatuses.join(", ")}`,
             400,
             "INVALID_STATUS",
           );
         }
+        console.log(`   ✓ Status validation passed`);
+
 
         const now = new Date().toISOString();
 
@@ -1232,10 +1248,14 @@ async function handler(req: Request): Promise<Response> {
   ) {
     try {
       const videoId = path.split("/")[3];
+      console.log(`🎨 Approve assets request for video ${videoId}`);
+
       const body: ApproveAssetsRequest = await req.json();
+      console.log(`   Request body:`, JSON.stringify(body));
 
       // Validate request body
       if (typeof body.approved !== "boolean") {
+        console.error(`   ❌ Invalid request body: approved is not a boolean`);
         return errorResponse(
           "Request body must include 'approved' boolean field",
           400,
@@ -1254,6 +1274,7 @@ async function handler(req: Request): Promise<Response> {
         );
 
         if (result.records.length === 0) {
+          console.error(`   ❌ Video or assets not found`);
           return errorResponse(
             "Video or assets not found",
             404,
@@ -1263,16 +1284,19 @@ async function handler(req: Request): Promise<Response> {
 
         const record = result.records[0];
         const videoProps = record.get("v").properties;
+        console.log(`   Current video status: ${videoProps.status}`);
 
         // Verify video is in correct status (or later - allow going back and re-approving)
         const validStatuses = ["assets_review", "assets_approved", "rendering", "complete"];
         if (!validStatuses.includes(videoProps.status)) {
+          console.error(`   ❌ Invalid status: ${videoProps.status} not in ${validStatuses.join(", ")}`);
           return errorResponse(
             `Cannot approve assets. Video status is '${videoProps.status}' but must be one of: ${validStatuses.join(", ")}`,
             400,
             "INVALID_STATUS",
           );
         }
+        console.log(`   ✓ Status validation passed`);
 
         const now = new Date().toISOString();
 

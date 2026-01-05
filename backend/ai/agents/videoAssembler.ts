@@ -622,18 +622,25 @@ async function assembleVideoWithFFmpeg(
       filterParts.push(`[v0]copy[outv]`);
     } else {
       // Multiple scenes: add crossfade transitions with cumulative offsets
+      const transitionDuration = 0.5;
       let cumulativeDuration = 0;
 
       // First transition
       cumulativeDuration += (scenes[0].endTime - scenes[0].startTime);
-      const firstOffset = cumulativeDuration - 0.5;  // 0.5s before end of first scene
-      filterParts.push(`[v0][v1]xfade=transition=fade:duration=0.5:offset=${firstOffset}[vf0]`);
+      const firstOffset = cumulativeDuration - transitionDuration;
+      filterParts.push(`[v0][v1]xfade=transition=fade:duration=${transitionDuration}:offset=${firstOffset}[vf0]`);
+
+      // Subtract transition duration to account for crossfade overlap
+      cumulativeDuration -= transitionDuration;
 
       // Middle scenes
       for (let i = 1; i < assetFiles.length - 1; i++) {
         cumulativeDuration += (scenes[i].endTime - scenes[i].startTime);
-        const offset = cumulativeDuration - 0.5;  // 0.5s before end of current scene
-        filterParts.push(`[vf${i-1}][v${i+1}]xfade=transition=fade:duration=0.5:offset=${offset}[vf${i}]`);
+        const offset = cumulativeDuration - transitionDuration;
+        filterParts.push(`[vf${i-1}][v${i+1}]xfade=transition=fade:duration=${transitionDuration}:offset=${offset}[vf${i}]`);
+
+        // Subtract transition duration to account for crossfade overlap
+        cumulativeDuration -= transitionDuration;
       }
 
       // Output the final faded video
@@ -641,15 +648,25 @@ async function assembleVideoWithFFmpeg(
       filterParts.push(`[vf${lastIndex}]copy[outv]`);
     }
 
-    const filterComplex = filterParts.join(";");
+    // Calculate total video duration (accounting for crossfade overlaps)
+    // Each crossfade transition overlaps by transitionDuration (0.5s)
+    const requestedDuration = scenes[scenes.length - 1].endTime;
+    const numTransitions = assetFiles.length - 1;
+    const transitionDuration = 0.5;
+    const actualVideoDuration = requestedDuration - (numTransitions * transitionDuration);
+
+    // Add audio padding to match video duration (if audio is shorter)
+    // This ensures audio doesn't cut off video early
+    const audioPadFilter = `apad=whole_dur=${actualVideoDuration}`;
+    const fullFilterComplex = `${filterParts.join(";")};[${assetFiles.length}:a]${audioPadFilter}[outa]`;
 
     // Generate FFmpeg command
     const ffmpegArgs = [
       "-y", // Overwrite output file
       ...inputArgs,
-      "-filter_complex", filterComplex,
+      "-filter_complex", fullFilterComplex,
       "-map", "[outv]",
-      "-map", `${assetFiles.length}:a`, // Map audio (last input)
+      "-map", "[outa]", // Map padded audio
       "-c:v", "libx264",
       "-preset", "medium",
       "-crf", "23",
@@ -657,12 +674,13 @@ async function assembleVideoWithFFmpeg(
       "-b:a", "128k",
       "-pix_fmt", "yuv420p",
       "-movflags", "+faststart",
-      "-shortest", // End when shortest stream ends
+      // Note: Not using -t to constrain duration - let filter chain determine natural length
       outputFile
     ];
 
     console.log(`  Executing FFmpeg with Ken Burns effect and transitions...`);
-    console.log(`  Filter: ${filterComplex.substring(0, 200)}...`); // Log first 200 chars of filter
+    console.log(`  Requested duration: ${requestedDuration}s, Actual duration (with ${numTransitions} transitions): ${actualVideoDuration}s`);
+    console.log(`  Filter: ${fullFilterComplex.substring(0, 200)}...`); // Log first 200 chars of filter
 
     const command = new Deno.Command("ffmpeg", {
       args: ffmpegArgs,

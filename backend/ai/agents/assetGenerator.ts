@@ -322,8 +322,8 @@ async function animateImageWithHailuo(
 ): Promise<z.infer<typeof GeneratedAssetSchema>> {
   const startTime = Date.now();
 
-  // Create animation prompt from scene description
-  const animationPrompt = `${scene.description}. Animate with realistic movement, natural motion, and cinematic camera work.`;
+  // Create animation prompt with EXPLICIT vertical/portrait orientation instructions
+  const animationPrompt = `${scene.description}. CRITICAL: Maintain VERTICAL PORTRAIT orientation (9:16 aspect ratio) for mobile/TikTok format. Keep all subjects UPRIGHT and properly oriented for vertical viewing. Animate with realistic movement, natural motion, and cinematic camera work while preserving the vertical composition.`;
 
   console.log(`    🎬 Hailuo animation starting for scene ${scene.order}...`);
 

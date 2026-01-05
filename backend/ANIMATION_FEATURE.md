@@ -365,6 +365,13 @@ This looping is handled automatically by FFmpeg using `-stream_loop -1` paramete
 - ✅ No audio/video desynchronization
 - ✅ Seamless playback without visible loop points
 
+**Implementation Details:**
+The video assembler (`backend/ai/agents/videoAssembler.ts`) checks each video's duration against the scene duration:
+- If video is **shorter than scene** (e.g., 6s video for 15s scene): Apply `-stream_loop -1` to infinitely loop, then trim to scene duration with `-t`
+- If video is **same length or longer**: Just trim to scene duration with `-t`
+
+Additionally, audio is padded with silence using `apad=whole_dur=${totalVideoDuration}` to ensure audio doesn't cut off video early. The explicit duration parameter `-t` ensures the final video is exactly the requested length.
+
 ### 4. Monitoring and Logging
 
 The system includes built-in logging for monitoring:
