@@ -505,14 +505,31 @@ async function assembleVideoWithFFmpeg(
     // Add all asset inputs
     for (let i = 0; i < assetFiles.length; i++) {
       const info = assetInfo[i];
+      const sceneDuration = scenes[i].endTime - scenes[i].startTime;
+
       if (info.isVideo) {
-        // For videos, just use them directly (trim to scene duration if needed)
-        inputArgs.push("-i", assetFiles[i]);
+        // For videos: check if we need to loop (Hailuo videos are 6s, scenes may be longer)
+        if (info.duration < sceneDuration) {
+          // Video is shorter than scene - need to loop it
+          console.log(`  Scene ${i + 1}: Looping ${info.duration}s video to fill ${sceneDuration}s duration`);
+          // Use stream_loop to repeat the video (-1 means infinite loop, then trim with -t)
+          inputArgs.push(
+            "-stream_loop", "-1",  // Loop infinitely
+            "-t", sceneDuration.toString(),  // Trim to scene duration
+            "-i", assetFiles[i]
+          );
+        } else {
+          // Video is same length or longer than scene - just trim
+          inputArgs.push(
+            "-t", sceneDuration.toString(),
+            "-i", assetFiles[i]
+          );
+        }
       } else {
         // For images, loop for the scene duration
         inputArgs.push(
           "-loop", "1",
-          "-t", scenes[i].endTime.toString(),
+          "-t", sceneDuration.toString(),
           "-i", assetFiles[i]
         );
       }
@@ -533,11 +550,8 @@ async function assembleVideoWithFFmpeg(
       let filter = `[${i}:v]`;
 
       if (info.isVideo) {
-        // For videos: trim to scene duration, scale, and pad (no Ken Burns effect)
-        const sceneDuration = scenes[i].endTime - scenes[i].startTime;
-
-        // Trim video to scene duration (if video is longer)
-        filter += `trim=duration=${sceneDuration},setpts=PTS-STARTPTS,`;
+        // For videos: scale and pad (no Ken Burns effect)
+        // Note: Duration trimming is already handled at input stage with -t parameter
 
         // Apply rotation if needed
         if (info.rotation === 90) {
@@ -607,13 +621,18 @@ async function assembleVideoWithFFmpeg(
       // Single scene: just use as-is
       filterParts.push(`[v0]copy[outv]`);
     } else {
-      // Multiple scenes: add crossfade transitions
-      // First scene
-      filterParts.push(`[v0][v1]xfade=transition=fade:duration=0.5:offset=${scenes[0].endTime - 0.5}[vf0]`);
+      // Multiple scenes: add crossfade transitions with cumulative offsets
+      let cumulativeDuration = 0;
+
+      // First transition
+      cumulativeDuration += (scenes[0].endTime - scenes[0].startTime);
+      const firstOffset = cumulativeDuration - 0.5;  // 0.5s before end of first scene
+      filterParts.push(`[v0][v1]xfade=transition=fade:duration=0.5:offset=${firstOffset}[vf0]`);
 
       // Middle scenes
       for (let i = 1; i < assetFiles.length - 1; i++) {
-        const offset = scenes[i].endTime - 0.5;
+        cumulativeDuration += (scenes[i].endTime - scenes[i].startTime);
+        const offset = cumulativeDuration - 0.5;  // 0.5s before end of current scene
         filterParts.push(`[vf${i-1}][v${i+1}]xfade=transition=fade:duration=0.5:offset=${offset}[vf${i}]`);
       }
 
