@@ -434,110 +434,168 @@ async function assembleVideoWithFFmpeg(
   const outputFile = `${tempDir}/output.mp4`;
 
   try {
-    // Download assets to temp directory and check dimensions
-    const imageFiles: string[] = [];
-    const imageDimensions: Array<{ width: number; height: number; rotation: number }> = [];
+    // Download assets to temp directory and check dimensions/type
+    const assetFiles: string[] = [];
+    const assetInfo: Array<{
+      width: number;
+      height: number;
+      rotation: number;
+      isVideo: boolean;
+      duration: number;
+    }> = [];
 
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
-      const imagePath = `${tempDir}/scene_${i}.jpg`;
 
+      // Download to temp file first
+      const tempPath = `${tempDir}/scene_${i}.tmp`;
       console.log(`  Downloading scene ${i + 1} from ${scene.assetUrl}...`);
       const response = await fetch(scene.assetUrl);
-      const imageData = await response.arrayBuffer();
-      await Deno.writeFile(imagePath, new Uint8Array(imageData));
+      const assetData = await response.arrayBuffer();
+      await Deno.writeFile(tempPath, new Uint8Array(assetData));
 
-      // Get image dimensions AND orientation using ffprobe
+      // Probe the file to detect if it's image or video
       const probeCommand = new Deno.Command("ffprobe", {
         args: [
           "-v", "error",
-          "-select_streams", "v:0",
-          "-show_entries", "stream=width,height:stream_tags=rotate",
+          "-show_entries", "stream=codec_type,width,height,duration:stream_tags=rotate:format=duration",
           "-of", "json",
-          imagePath
+          tempPath
         ],
         stdout: "piped",
       });
 
       const { stdout } = await probeCommand.output();
       const probeData = JSON.parse(new TextDecoder().decode(stdout));
-      const stream = probeData.streams[0];
+      const videoStream = probeData.streams?.find((s: any) => s.codec_type === "video");
 
-      let width = stream.width;
-      let height = stream.height;
-      const rotation = stream.tags?.rotate ? parseInt(stream.tags.rotate) : 0;
-
-      // Swap dimensions if image is rotated 90 or 270 degrees
-      if (rotation === 90 || rotation === 270) {
-        [width, height] = [height, width];
+      if (!videoStream) {
+        throw new Error(`Could not detect video stream in asset ${i + 1}`);
       }
 
-      imageDimensions.push({ width, height, rotation });
-      imageFiles.push(imagePath);
+      const width = videoStream.width;
+      const height = videoStream.height;
+      const rotation = videoStream.tags?.rotate ? parseInt(videoStream.tags.rotate) : 0;
+      const isVideo = probeData.streams?.some((s: any) => s.codec_type === "audio") ||
+                      (videoStream.duration && parseFloat(videoStream.duration) > 0);
+      const duration = videoStream.duration ? parseFloat(videoStream.duration) :
+                      (probeData.format?.duration ? parseFloat(probeData.format.duration) : 0);
 
-      console.log(`  Scene ${i + 1} dimensions: ${width}x${height} (${width > height ? 'horizontal' : 'vertical'}), rotation: ${rotation}°`);
+      // Rename file with correct extension
+      const finalPath = isVideo ? `${tempDir}/scene_${i}.mp4` : `${tempDir}/scene_${i}.jpg`;
+      await Deno.rename(tempPath, finalPath);
+
+      // Swap dimensions if rotated
+      let finalWidth = width;
+      let finalHeight = height;
+      if (rotation === 90 || rotation === 270) {
+        [finalWidth, finalHeight] = [finalHeight, finalWidth];
+      }
+
+      assetInfo.push({ width: finalWidth, height: finalHeight, rotation, isVideo, duration });
+      assetFiles.push(finalPath);
+
+      console.log(`  Scene ${i + 1}: ${isVideo ? 'VIDEO' : 'IMAGE'} ${finalWidth}x${finalHeight} (${finalWidth > finalHeight ? 'horizontal' : 'vertical'}), rotation: ${rotation}°${isVideo ? `, duration: ${duration.toFixed(1)}s` : ''}`);
     }
 
-    // Build FFmpeg input arguments for all images
+    // Build FFmpeg input arguments for all assets
     const inputArgs: string[] = [];
     const filterParts: string[] = [];
 
-    // Add all image inputs
-    for (let i = 0; i < imageFiles.length; i++) {
-      inputArgs.push(
-        "-loop", "1",
-        "-t", scenes[i].endTime.toString(),
-        "-i", imageFiles[i]
-      );
+    // Add all asset inputs
+    for (let i = 0; i < assetFiles.length; i++) {
+      const info = assetInfo[i];
+      if (info.isVideo) {
+        // For videos, just use them directly (trim to scene duration if needed)
+        inputArgs.push("-i", assetFiles[i]);
+      } else {
+        // For images, loop for the scene duration
+        inputArgs.push(
+          "-loop", "1",
+          "-t", scenes[i].endTime.toString(),
+          "-i", assetFiles[i]
+        );
+      }
     }
 
     // Add audio input
     inputArgs.push("-i", audioUrl);
 
-    // Create filter complex for each image with Ken Burns effect
+    // Create filter complex for each asset
     // Target: 1080x1920 output (vertical TikTok/Reels format)
-    for (let i = 0; i < imageFiles.length; i++) {
+    for (let i = 0; i < assetFiles.length; i++) {
       const duration = scenes[i].endTime - scenes[i].startTime;
       const frames = Math.floor(duration * 30); // 30fps
-      const dims = imageDimensions[i];
-      const isHorizontal = dims.width > dims.height;
+      const info = assetInfo[i];
+      const isHorizontal = info.width > info.height;
 
       // Build filter chain
       let filter = `[${i}:v]`;
 
-      // Step 1: Apply rotation based on EXIF metadata
-      if (dims.rotation === 90) {
-        filter += `transpose=1,`; // 1 = 90 degrees clockwise
-        console.log(`  Applying EXIF rotation: 90° clockwise for scene ${i + 1}`);
-      } else if (dims.rotation === 180) {
-        filter += `transpose=1,transpose=1,`; // Two 90° rotations = 180°
-        console.log(`  Applying EXIF rotation: 180° for scene ${i + 1}`);
-      } else if (dims.rotation === 270) {
-        filter += `transpose=2,`; // 2 = 90 degrees counter-clockwise
-        console.log(`  Applying EXIF rotation: 270° for scene ${i + 1}`);
+      if (info.isVideo) {
+        // For videos: trim to scene duration, scale, and pad (no Ken Burns effect)
+        const sceneDuration = scenes[i].endTime - scenes[i].startTime;
+
+        // Trim video to scene duration (if video is longer)
+        filter += `trim=duration=${sceneDuration},setpts=PTS-STARTPTS,`;
+
+        // Apply rotation if needed
+        if (info.rotation === 90) {
+          filter += `transpose=1,`;
+          console.log(`  Applying rotation: 90° clockwise for video scene ${i + 1}`);
+        } else if (info.rotation === 180) {
+          filter += `transpose=1,transpose=1,`;
+          console.log(`  Applying rotation: 180° for video scene ${i + 1}`);
+        } else if (info.rotation === 270) {
+          filter += `transpose=2,`;
+          console.log(`  Applying rotation: 270° for video scene ${i + 1}`);
+        }
+
+        // Rotate horizontal videos to vertical
+        if (info.rotation === 0 && isHorizontal) {
+          filter += `transpose=1,`;
+          console.log(`  Rotating video scene ${i + 1} from horizontal to vertical`);
+        }
+
+        // Scale and pad to vertical format
+        filter += `scale=1080:1920:force_original_aspect_ratio=decrease,`;
+        filter += `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,`;
+        filter += `fps=30`; // Ensure consistent frame rate
+      } else {
+        // For images: apply rotation, scale, pad, and Ken Burns effect
+        // Step 1: Apply rotation based on EXIF metadata
+        if (info.rotation === 90) {
+          filter += `transpose=1,`;
+          console.log(`  Applying EXIF rotation: 90° clockwise for image scene ${i + 1}`);
+        } else if (info.rotation === 180) {
+          filter += `transpose=1,transpose=1,`;
+          console.log(`  Applying EXIF rotation: 180° for image scene ${i + 1}`);
+        } else if (info.rotation === 270) {
+          filter += `transpose=2,`;
+          console.log(`  Applying EXIF rotation: 270° for image scene ${i + 1}`);
+        }
+
+        // Step 2: Rotate horizontal images to vertical
+        if (info.rotation === 0 && isHorizontal) {
+          filter += `transpose=1,`;
+          console.log(`  Rotating image scene ${i + 1} from horizontal to vertical`);
+        }
+
+        // Step 3: Scale to fit vertical canvas
+        filter += `scale=1080:1920:force_original_aspect_ratio=decrease,`;
+
+        // Step 4: Pad to exact size
+        filter += `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,`;
+
+        // Step 5: Apply Ken Burns effect (slow zoom with subtle pan)
+        filter += `zoompan=` +
+          `z='min(1.0+0.3*on/${frames},1.3)':` +
+          `x='iw/2-(iw/zoom/2)':` +
+          `y='ih/2-(ih/zoom/2)+sin(on/30)*20':` +
+          `d=${frames}:` +
+          `s=1080x1920:` +
+          `fps=30`;
       }
-
-      // Step 2: Rotate horizontal images to vertical (90 degrees clockwise)
-      // Only if no rotation was applied AND image is horizontal
-      if (dims.rotation === 0 && isHorizontal) {
-        filter += `transpose=1,`; // 1 = 90 degrees clockwise
-        console.log(`  Rotating scene ${i + 1} from horizontal to vertical`);
-      }
-
-      // Step 2: Scale to fit vertical canvas (maintain aspect ratio)
-      filter += `scale=1080:1920:force_original_aspect_ratio=decrease,`;
-
-      // Step 3: Pad to exact size with black bars if needed
-      filter += `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,`;
-
-      // Step 4: Apply Ken Burns effect (slow zoom from 1.0x to 1.3x with subtle pan)
-      filter += `zoompan=` +
-        `z='min(1.0+0.3*on/${frames},1.3)':` + // Gradual zoom from 1.0 to 1.3
-        `x='iw/2-(iw/zoom/2)':` + // Center X
-        `y='ih/2-(ih/zoom/2)+sin(on/30)*20':` + // Subtle vertical pan
-        `d=${frames}:` + // Duration in frames
-        `s=1080x1920:` + // Output size (vertical)
-        `fps=30`; // Frame rate
 
       filter += `[v${i}]`;
 
@@ -545,7 +603,7 @@ async function assembleVideoWithFFmpeg(
     }
 
     // Add fade transitions between scenes
-    if (imageFiles.length === 1) {
+    if (assetFiles.length === 1) {
       // Single scene: just use as-is
       filterParts.push(`[v0]copy[outv]`);
     } else {
@@ -554,13 +612,13 @@ async function assembleVideoWithFFmpeg(
       filterParts.push(`[v0][v1]xfade=transition=fade:duration=0.5:offset=${scenes[0].endTime - 0.5}[vf0]`);
 
       // Middle scenes
-      for (let i = 1; i < imageFiles.length - 1; i++) {
+      for (let i = 1; i < assetFiles.length - 1; i++) {
         const offset = scenes[i].endTime - 0.5;
         filterParts.push(`[vf${i-1}][v${i+1}]xfade=transition=fade:duration=0.5:offset=${offset}[vf${i}]`);
       }
 
       // Output the final faded video
-      const lastIndex = imageFiles.length - 2;
+      const lastIndex = assetFiles.length - 2;
       filterParts.push(`[vf${lastIndex}]copy[outv]`);
     }
 
@@ -572,7 +630,7 @@ async function assembleVideoWithFFmpeg(
       ...inputArgs,
       "-filter_complex", filterComplex,
       "-map", "[outv]",
-      "-map", `${imageFiles.length}:a`, // Map audio (last input)
+      "-map", `${assetFiles.length}:a`, // Map audio (last input)
       "-c:v", "libx264",
       "-preset", "medium",
       "-crf", "23",
