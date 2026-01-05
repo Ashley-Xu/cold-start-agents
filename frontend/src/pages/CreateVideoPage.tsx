@@ -115,7 +115,12 @@ export default function CreateVideoPage() {
       api.approveStoryboard(videoId!, approved),
     onSuccess: () => {
       setCurrentStep('assets_review')
-      generateAssetsMutation.mutate()
+      // Only trigger asset generation if videoId exists
+      if (videoId) {
+        generateAssetsMutation.mutate()
+      } else {
+        console.error('Cannot generate assets: videoId is null')
+      }
     },
   })
 
@@ -124,6 +129,10 @@ export default function CreateVideoPage() {
     onSuccess: (data) => {
       setAssets(data.assets)
       setTotalCost((prev) => prev + data.totalCost)
+    },
+    onError: (error) => {
+      console.error('Failed to generate assets:', error)
+      // Error will be displayed in the UI via generateAssetsMutation.error
     },
   })
 
@@ -715,26 +724,75 @@ export default function CreateVideoPage() {
         Step 4: Review Generated Assets
       </h2>
 
-      {!assets ? (
+      {generateAssetsMutation.isError ? (
+        <div className="text-center p-6 bg-red-50 border border-red-200 rounded-lg">
+          <div className="text-red-600 text-xl mb-2">❌ Error Generating Assets</div>
+          <p className="text-red-700 mb-4">
+            {generateAssetsMutation.error instanceof Error
+              ? generateAssetsMutation.error.message
+              : 'Failed to generate assets. Please try again.'}
+          </p>
+          <button
+            onClick={() => generateAssetsMutation.mutate()}
+            disabled={generateAssetsMutation.isPending}
+            className="px-6 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {generateAssetsMutation.isPending ? 'Retrying...' : 'Retry Generation'}
+          </button>
+          <button
+            onClick={handleBackFromAssetsReview}
+            className="ml-3 px-6 py-2 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+          >
+            ← Back to Storyboard
+          </button>
+        </div>
+      ) : !assets && generateAssetsMutation.isPending ? (
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-600 mb-2">Generating assets with DALL-E 3...</p>
           <p className="text-sm text-gray-500">This may take 30-90 seconds</p>
         </div>
+      ) : !assets ? (
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">Assets generation not started yet.</p>
+          <button
+            onClick={() => generateAssetsMutation.mutate()}
+            disabled={generateAssetsMutation.isPending}
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {generateAssetsMutation.isPending ? 'Generating...' : 'Generate Assets'}
+          </button>
+        </div>
       ) : (
         <div>
           <div className="grid md:grid-cols-3 gap-4 mb-6">
             {assets.map((asset, index) => (
-              <div key={index} className="border rounded-lg p-4 bg-gray-50">
+              <div key={asset.sceneId} className="border rounded-lg p-4 bg-gray-50">
                 <div className="aspect-video bg-gray-200 rounded mb-3 flex items-center justify-center overflow-hidden">
-                  <img
-                    src={asset.url}
-                    alt={`Scene ${index + 1}`}
-                    className="w-full h-full object-cover rounded"
-                  />
+                  {asset.type === 'video_clip' ? (
+                    <video
+                      src={asset.url}
+                      controls
+                      autoPlay
+                      loop
+                      muted
+                      className="w-full h-full object-cover rounded"
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                  ) : (
+                    <img
+                      src={asset.url}
+                      alt={`Scene ${index + 1}`}
+                      className="w-full h-full object-cover rounded"
+                    />
+                  )}
                 </div>
                 <div className="text-sm text-gray-600 mb-2">
                   Scene {index + 1} | ${asset.cost.toFixed(2)}
+                  {asset.type === 'video_clip' && (
+                    <span className="ml-2 text-purple-600 font-semibold">🎬 Animated</span>
+                  )}
                   {asset.reused && (
                     <span className="ml-2 text-green-600 font-semibold">(Reused)</span>
                   )}
