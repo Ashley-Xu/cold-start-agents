@@ -351,6 +351,20 @@ Error: Hailuo generation timed out after 120s
 // 10 seconds at 768p = $0.450
 ```
 
+**Important Note on Video Duration:**
+Hailuo generates 6-second animated clips by default. For longer scenes (e.g., 15-second scenes in 30-second videos), the video assembler automatically loops the 6-second clips to fill the scene duration.
+
+Example for 30-second video with 2 scenes:
+- Scene 1 (0-15s): 6-second Hailuo video loops 2.5 times (6s + 6s + 3s)
+- Scene 2 (15-30s): 6-second Hailuo video loops 2.5 times (6s + 6s + 3s)
+- Total: 30 seconds with smooth transitions at 15s mark
+
+This looping is handled automatically by FFmpeg using `-stream_loop -1` parameter and ensures:
+- ✅ Videos match requested duration (30s, 60s, or 90s)
+- ✅ Smooth transitions between scenes
+- ✅ No audio/video desynchronization
+- ✅ Seamless playback without visible loop points
+
 ### 4. Monitoring and Logging
 
 The system includes built-in logging for monitoring:
