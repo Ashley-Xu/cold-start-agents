@@ -1,0 +1,1 @@
+In order to solve the cold-start problems for lingowhales, we created two sets of agents: 1) AI generated content agentic system 2) Youtube Scraper agents searching for youtube videos suitable to the needs of the users
