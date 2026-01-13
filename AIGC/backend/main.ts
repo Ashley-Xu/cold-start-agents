@@ -360,7 +360,7 @@ async function handler(req: Request): Promise<Response> {
   }
 
   // GET /api/videos/:videoId - Get video details
-  // Note: Must check this AFTER specific routes like /download and /subtitles
+ 
   if (path.startsWith("/api/videos/") && method === "GET" &&
       !path.includes("/download") && !path.includes("/subtitles")) {
     try {
@@ -444,21 +444,16 @@ async function handler(req: Request): Promise<Response> {
     }
   }
 
-  // ========================================================================
-  // Placeholder Endpoints (to be implemented in Phase 2-4)
-  // ========================================================================
-
   // POST /api/videos/:videoId/analyze - Story Analyzer
   if (path.match(/^\/api\/videos\/[^/]+\/analyze$/) && method === "POST") {
     try {
       const videoId = path.split("/")[3];
 
-      // Optional: Parse request body for userFeedback (for iterative refinement)
       const body = await parseBody<{ userFeedback?: string }>(req).catch(() => ({}));
 
       const session = getSession();
       try {
-        // Fetch video project
+      
         const videoResult = await session.run(
           `MATCH (v:VideoProject {id: $videoId}) RETURN v`,
           { videoId },
@@ -471,7 +466,7 @@ async function handler(req: Request): Promise<Response> {
         const videoNode = videoResult.records[0].get("v");
         const videoProps = videoNode.properties;
 
-        // Prepare input for Story Analyzer Agent
+       
         const analyzerInput: StoryAnalyzerInput = {
           topic: videoProps.topic,
           language: videoProps.language,
@@ -483,7 +478,7 @@ async function handler(req: Request): Promise<Response> {
 
         console.log(`🎬 Analyzing story for video ${videoId}...`);
 
-        // Call Story Analyzer Agent
+        
         const analysis: StoryAnalyzerOutput = await analyzeStory(analyzerInput);
 
         console.log(`✅ Story analysis complete:`, {
@@ -492,7 +487,7 @@ async function handler(req: Request): Promise<Response> {
           mood: analysis.mood,
         });
 
-        // Create StoryAnalysis node in database
+        
         const analysisId = generateId();
         const now = new Date().toISOString();
 
@@ -523,7 +518,7 @@ async function handler(req: Request): Promise<Response> {
           },
         );
 
-        // Return analysis results
+       
         return successResponse({
           analysisId,
           ...analysis,
@@ -545,7 +540,7 @@ async function handler(req: Request): Promise<Response> {
 
       const session = getSession();
       try {
-        // Fetch video project and its story analysis
+       
         const result = await session.run(
           `
           MATCH (v:VideoProject {id: $videoId})-[:HAS_ANALYSIS]->(a:StoryAnalysis)
@@ -569,7 +564,6 @@ async function handler(req: Request): Promise<Response> {
         const videoProps = videoNode.properties;
         const analysisProps = analysisNode.properties;
 
-        // Delete old script if regenerating
         const existingScript = await session.run(
           `MATCH (v:VideoProject {id: $videoId})-[:HAS_SCRIPT]->(s:Script)
            RETURN s`,
@@ -586,7 +580,6 @@ async function handler(req: Request): Promise<Response> {
           );
         }
 
-        // Prepare input for Script Writer Agent
         const scriptInput: ScriptWriterInput = {
           concept: analysisProps.concept,
           themes: analysisProps.themes,
@@ -600,7 +593,6 @@ async function handler(req: Request): Promise<Response> {
 
         console.log(`📝 Generating script for video ${videoId}...`);
 
-        // Call Script Writer Agent
         const scriptOutput: ScriptWriterOutput = await generateScript(
           scriptInput,
         );
@@ -611,11 +603,9 @@ async function handler(req: Request): Promise<Response> {
           estimatedDuration: scriptOutput.estimatedDuration,
         });
 
-        // Create Script node and SceneScript nodes in database
         const scriptId = generateId();
         const now = new Date().toISOString();
 
-        // Create Script node
         await session.run(
           `
           MATCH (v:VideoProject {id: $videoId})
@@ -641,7 +631,6 @@ async function handler(req: Request): Promise<Response> {
           },
         );
 
-        // Create SceneScript nodes
         for (const scene of scriptOutput.scenes) {
           const sceneId = generateId();
           await session.run(
