@@ -1,0 +1,31 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-net --allow-read --allow-write --allow-env src/main.ts",
+    "scrape": "deno run --allow-net --allow-read --allow-write --allow-env src/main.ts"
+  },
+  "imports": {
+    "@std/flags": "jsr:@std/flags@^0.224",
+    "@std/csv": "jsr:@std/csv@^1.0",
+    "@std/path": "jsr:@std/path@^1.0",
+    "@std/fs": "jsr:@std/fs@^1.0",
+    "@std/dotenv": "jsr:@std/dotenv@^0.225",
+    "openai": "npm:openai@^4.77.3",
+    "zod": "npm:zod@^3.24.1",
+    "youtube-transcript": "npm:youtube-transcript@^1.2.1",
+    "db": "https://deno.land/x/sqlite@v3.9.1/mod.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.window", "deno.ns"]
+  },
+  "fmt": {
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "semiColons": true
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

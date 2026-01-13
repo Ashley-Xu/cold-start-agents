@@ -1,0 +1,28 @@
+# Environment variables
+.env
+
+# Output directory
+output/
+
+# Cache directory
+cache/
+
+# Deno cache
+.deno/
+
+# Node modules (npm packages)
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Log files
+*.log

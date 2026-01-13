@@ -1,0 +1,169 @@
+{
+  "chinese": {
+    "HSK1": {
+      "patterns": [
+        "HSK\\s*1",
+        "HSK\\s*Level\\s*1",
+        "HSK1",
+        "初级中文",
+        "beginner\\s+chinese",
+        "chinese\\s+for\\s+beginners",
+        "basic\\s+chinese",
+        "入门中文"
+      ],
+      "vocabulary_hints": ["150", "300"]
+    },
+    "HSK2": {
+      "patterns": [
+        "HSK\\s*2",
+        "HSK\\s*Level\\s*2",
+        "HSK2",
+        "elementary\\s+chinese",
+        "500\\s+words"
+      ],
+      "vocabulary_hints": ["500", "600"]
+    },
+    "HSK3": {
+      "patterns": [
+        "HSK\\s*3",
+        "HSK\\s*Level\\s*3",
+        "HSK3",
+        "intermediate\\s+chinese",
+        "中级中文"
+      ],
+      "vocabulary_hints": ["600", "1200"]
+    },
+    "HSK4": {
+      "patterns": [
+        "HSK\\s*4",
+        "HSK\\s*Level\\s*4",
+        "HSK4",
+        "upper\\s+intermediate\\s+chinese"
+      ],
+      "vocabulary_hints": ["1200", "2500"]
+    },
+    "HSK5": {
+      "patterns": [
+        "HSK\\s*5",
+        "HSK\\s*Level\\s*5",
+        "HSK5",
+        "advanced\\s+chinese",
+        "高级中文"
+      ],
+      "vocabulary_hints": ["2500"]
+    },
+    "HSK6": {
+      "patterns": [
+        "HSK\\s*6",
+        "HSK\\s*Level\\s*6",
+        "HSK6",
+        "fluent\\s+chinese",
+        "流利中文"
+      ],
+      "vocabulary_hints": ["5000"]
+    }
+  },
+  "french": {
+    "A1": {
+      "patterns": [
+        "\\bA1\\b",
+        "CEFR\\s*A1",
+        "débutant",
+        "beginner\\s+french",
+        "french\\s+for\\s+beginners",
+        "basic\\s+french",
+        "français\\s+débutant"
+      ]
+    },
+    "A2": {
+      "patterns": [
+        "\\bA2\\b",
+        "CEFR\\s*A2",
+        "élémentaire",
+        "elementary\\s+french",
+        "français\\s+élémentaire"
+      ]
+    },
+    "B1": {
+      "patterns": [
+        "\\bB1\\b",
+        "CEFR\\s*B1",
+        "intermédiaire",
+        "intermediate\\s+french",
+        "français\\s+intermédiaire"
+      ]
+    },
+    "B2": {
+      "patterns": [
+        "\\bB2\\b",
+        "CEFR\\s*B2",
+        "upper\\s+intermediate\\s+french",
+        "français\\s+avancé"
+      ]
+    },
+    "C1": {
+      "patterns": [
+        "\\bC1\\b",
+        "CEFR\\s*C1",
+        "advanced\\s+french",
+        "français\\s+supérieur"
+      ]
+    },
+    "C2": {
+      "patterns": [
+        "\\bC2\\b",
+        "CEFR\\s*C2",
+        "fluent\\s+french",
+        "français\\s+couramment",
+        "native\\s+level"
+      ]
+    }
+  },
+  "japanese": {
+    "N5": {
+      "patterns": [
+        "JLPT\\s*N5",
+        "\\bN5\\b",
+        "初級日本語",
+        "beginner\\s+japanese",
+        "japanese\\s+for\\s+beginners",
+        "basic\\s+japanese"
+      ]
+    },
+    "N4": {
+      "patterns": [
+        "JLPT\\s*N4",
+        "\\bN4\\b",
+        "elementary\\s+japanese",
+        "日本語\\s*N4"
+      ]
+    },
+    "N3": {
+      "patterns": [
+        "JLPT\\s*N3",
+        "\\bN3\\b",
+        "intermediate\\s+japanese",
+        "中級日本語",
+        "日本語\\s*N3"
+      ]
+    },
+    "N2": {
+      "patterns": [
+        "JLPT\\s*N2",
+        "\\bN2\\b",
+        "upper\\s+intermediate\\s+japanese",
+        "日本語\\s*N2"
+      ]
+    },
+    "N1": {
+      "patterns": [
+        "JLPT\\s*N1",
+        "\\bN1\\b",
+        "advanced\\s+japanese",
+        "上級日本語",
+        "fluent\\s+japanese",
+        "日本語\\s*N1"
+      ]
+    }
+  }
+}

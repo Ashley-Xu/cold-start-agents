@@ -1,0 +1,143 @@
+{
+  "topics": [
+    {
+      "id": "cooking",
+      "keywords": [
+        "cooking",
+        "recipe",
+        "cuisine",
+        "chef",
+        "美食",
+        "烹饪",
+        "做饭",
+        "料理",
+        "レシピ",
+        "recette",
+        "cuisiner",
+        "food preparation",
+        "baking"
+      ],
+      "emoji": "🍳"
+    },
+    {
+      "id": "grwm",
+      "keywords": [
+        "get ready with me",
+        "grwm",
+        "morning routine",
+        "化妆",
+        "打扮",
+        "メイク",
+        "準備",
+        "maquillage",
+        "se préparer",
+        "makeup",
+        "ready",
+        "routine matinale"
+      ],
+      "emoji": "💄"
+    },
+    {
+      "id": "sports",
+      "keywords": [
+        "sports",
+        "workout",
+        "fitness",
+        "exercise",
+        "运动",
+        "健身",
+        "スポーツ",
+        "エクササイズ",
+        "sport",
+        "entraînement",
+        "gym",
+        "training"
+      ],
+      "emoji": "⚽"
+    },
+    {
+      "id": "mukbang",
+      "keywords": [
+        "mukbang",
+        "eating show",
+        "吃播",
+        "大胃王",
+        "モッパン",
+        "食べる",
+        "asmr eating",
+        "food eating",
+        "eating challenge"
+      ],
+      "emoji": "🍜"
+    },
+    {
+      "id": "vlog",
+      "keywords": [
+        "vlog",
+        "daily life",
+        "日常",
+        "生活",
+        "日記",
+        "毎日",
+        "quotidien",
+        "vie quotidienne",
+        "daily vlog",
+        "lifestyle"
+      ],
+      "emoji": "📹"
+    },
+    {
+      "id": "travel",
+      "keywords": [
+        "travel",
+        "trip",
+        "旅行",
+        "旅游",
+        "観光",
+        "旅",
+        "voyage",
+        "voyager",
+        "tourism",
+        "destination",
+        "adventure"
+      ],
+      "emoji": "✈️"
+    },
+    {
+      "id": "education",
+      "keywords": [
+        "tutorial",
+        "lesson",
+        "learn",
+        "教学",
+        "学习",
+        "教程",
+        "レッスン",
+        "学ぶ",
+        "cours",
+        "apprendre",
+        "教育",
+        "teaching",
+        "how to"
+      ],
+      "emoji": "📚"
+    },
+    {
+      "id": "entertainment",
+      "keywords": [
+        "entertainment",
+        "funny",
+        "comedy",
+        "娱乐",
+        "搞笑",
+        "エンタメ",
+        "面白い",
+        "divertissement",
+        "amusant",
+        "humor",
+        "fun"
+      ],
+      "emoji": "🎭"
+    }
+  ]
+}
