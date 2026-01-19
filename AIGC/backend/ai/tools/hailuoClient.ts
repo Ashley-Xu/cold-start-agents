@@ -84,7 +84,7 @@ export async function generateAnimation(
     if (errorCode === 1008) {
       throw new Error(`MiniMax API error: Insufficient balance. Please check your account credits at https://platform.minimax.io/user-center/basic-information`);
     } else if (errorCode === 2049) {
-      throw new Error(`MiniMax API error: Invalid API key. Please verify MINIMAX_API_KEY_sub in .env file`);
+      throw new Error(`MiniMax API error: Invalid API key. Please verify MINIMAX_API_KEY_PAY_AS_YOU_GO in .env file`);
     } else if (errorCode === 2013) {
       throw new Error(`MiniMax API error: Invalid parameters - ${errorMsg}`);
     } else {

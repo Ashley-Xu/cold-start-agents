@@ -389,6 +389,7 @@ export interface AssetGeneratorInput {
     imagePrompt: string;
   }>;
   isPremium: boolean;
+  imageProvider?: "dall-e-3" | "gemini-nanobanana" | "gemini-nanobanana-pro"; // Image generation provider
 }
 
 export interface AssetGeneratorOutput {

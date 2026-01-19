@@ -1,13 +1,13 @@
-// Asset Generator Agent - Generates visual assets with DALL-E 3
+// Asset Generator Agent - Generates visual assets with DALL-E 3 or Gemini Nano Banana
 // NOTE: Uses direct OpenAI SDK integration (not Mastra framework)
 
 import { z } from "zod";
-import { openai, MODEL_CONFIG } from "../index.ts";
+import { openai } from "../index.ts";
 import { generateAnimatedVideo } from "../tools/hailuoClient.ts";
+import { generateImage as generateGeminiImage } from "../tools/geminiClient.ts";
 import type {
   AssetGeneratorInput,
   AssetGeneratorOutput,
-  AssetType,
 } from "../../lib/types.ts";
 
 // ============================================================================
@@ -15,12 +15,17 @@ import type {
 // ============================================================================
 
 /**
+ * Image provider options
+ */
+export type ImageProvider = "dall-e-3" | "gemini-nanobanana" | "gemini-nanobanana-pro";
+
+/**
  * Scene schema for asset generation input
  */
 export const AssetSceneSchema = z.object({
   order: z.number().int().min(1).describe("Scene order"),
   description: z.string().min(1).describe("Scene description"),
-  imagePrompt: z.string().min(1).describe("DALL-E 3 prompt"),
+  imagePrompt: z.string().min(1).describe("Image generation prompt"),
 });
 
 /**
@@ -28,7 +33,8 @@ export const AssetSceneSchema = z.object({
  */
 export const AssetGeneratorInputSchema = z.object({
   scenes: z.array(AssetSceneSchema).min(1).max(10).describe("Storyboard scenes"),
-  isPremium: z.boolean().describe("Use Sora for premium quality (true) or DALL-E 3 (false)"),
+  isPremium: z.boolean().describe("Use Sora for premium quality (true) or image generation (false)"),
+  imageProvider: z.enum(["dall-e-3", "gemini-nanobanana", "gemini-nanobanana-pro"]).default("gemini-nanobanana").describe("Image generation provider: DALL-E 3 or Gemini Nano Banana"),
 });
 
 /**
@@ -70,8 +76,9 @@ export async function generateAssets(
   // Validate input
   const validatedInput = AssetGeneratorInputSchema.parse(input);
 
+  const imageProvider = validatedInput.imageProvider || "gemini-nanobanana";
   console.log(
-    `🎨 Generating assets for ${validatedInput.scenes.length} scenes (Animation: Hailuo)...`,
+    `🎨 Generating assets for ${validatedInput.scenes.length} scenes (Image: ${imageProvider}, Animation: Hailuo)...`,
   );
 
   // Check if Hailuo API is available
@@ -91,29 +98,29 @@ export async function generateAssets(
     try {
       console.log(`  Generating asset ${idx + 1}/${validatedInput.scenes.length}...`);
 
-      // Step 1: Generate DALL-E image
-      const dalleImage = await generateImageAsset(scene);
+      // Step 1: Generate image using selected provider
+      const imageAsset = await generateImageAsset(scene, imageProvider);
 
       // Step 2: Try to animate with Hailuo (with fallback to static)
       if (hailuoAvailable) {
         try {
           console.log(`  🎬 Animating scene ${idx + 1} with Hailuo...`);
-          const animatedAsset = await animateImageWithHailuo(dalleImage, scene);
+          const animatedAsset = await animateImageWithHailuo(imageAsset, scene);
           console.log(`  ✓ Asset ${idx + 1} animated (${animatedAsset.url.substring(0, 50)}...)`);
           return animatedAsset;
         } catch (error) {
           console.warn(`  ⚠️  Animation failed for scene ${idx + 1}, using static image:`, error);
           // Fallback to static image with Ken Burns effect
           return {
-            ...dalleImage,
+            ...imageAsset,
             animationProvider: "static" as const,
           };
         }
       } else {
         // No Hailuo API key, use static image
-        console.log(`  ✓ Asset ${idx + 1} generated (static) (${dalleImage.url.substring(0, 50)}...)`);
+        console.log(`  ✓ Asset ${idx + 1} generated (static) (${imageAsset.url.substring(0, 50)}...)`);
         return {
-          ...dalleImage,
+          ...imageAsset,
           animationProvider: "static" as const,
         };
       }
@@ -128,7 +135,7 @@ export async function generateAssets(
 
   // Separate successful and failed results
   const assets = results
-    .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
+    .filter((r): r is PromiseFulfilledResult<z.infer<typeof GeneratedAssetSchema>> => r.status === "fulfilled")
     .map((r) => r.value);
 
   const failures = results
@@ -178,17 +185,40 @@ export async function generateAssets(
 }
 
 /**
- * Generate an image asset using DALL-E 3
+ * Generate an image asset using DALL-E 3 or Gemini Nano Banana
  *
  * @param scene - Scene with image prompt
+ * @param provider - Image generation provider (dall-e-3, gemini-nanobanana, or gemini-nanobanana-pro)
  * @returns Generated asset with URL and cost
  */
 async function generateImageAsset(
   scene: z.infer<typeof AssetSceneSchema>,
+  provider: ImageProvider = "gemini-nanobanana",
 ): Promise<z.infer<typeof GeneratedAssetSchema>> {
   // Generate sceneId (will be replaced by actual scene ID from database later)
   const sceneId = `scene-${scene.order}`;
 
+  // Route to appropriate provider
+  if (provider === "dall-e-3") {
+    return await generateDalleImage(scene, sceneId);
+  } else if (provider === "gemini-nanobanana" || provider === "gemini-nanobanana-pro") {
+    return await generateGeminiImageAsset(scene, sceneId, provider);
+  } else {
+    throw new Error(`Unsupported image provider: ${provider}`);
+  }
+}
+
+/**
+ * Generate an image asset using DALL-E 3
+ *
+ * @param scene - Scene with image prompt
+ * @param sceneId - Scene identifier
+ * @returns Generated asset with URL and cost
+ */
+async function generateDalleImage(
+  scene: z.infer<typeof AssetSceneSchema>,
+  sceneId: string,
+): Promise<z.infer<typeof GeneratedAssetSchema>> {
   try {
     // Enhance prompt to ensure correct vertical orientation
     const orientedPrompt = `${scene.imagePrompt}. IMPORTANT: Create a VERTICAL PORTRAIT composition (9:16 aspect ratio) where subjects are upright and properly oriented for vertical viewing. The scene should be naturally composed for vertical/portrait orientation.`;
@@ -202,7 +232,7 @@ async function generateImageAsset(
       quality: "standard", // or "hd" for premium
     });
 
-    const imageUrl = response.data[0]?.url;
+    const imageUrl = response.data?.[0]?.url;
 
     if (!imageUrl) {
       throw new Error("DALL-E 3 did not return an image URL");
@@ -220,7 +250,66 @@ async function generateImageAsset(
       reused: false,
     };
   } catch (error) {
-    console.error(`Error generating image for scene ${scene.order}:`, error);
+    console.error(`Error generating DALL-E image for scene ${scene.order}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Generate an image asset using Gemini Nano Banana
+ *
+ * @param scene - Scene with image prompt
+ * @param sceneId - Scene identifier
+ * @param provider - Gemini model variant (nanobanana or nanobanana-pro)
+ * @returns Generated asset with URL and cost
+ */
+async function generateGeminiImageAsset(
+  scene: z.infer<typeof AssetSceneSchema>,
+  sceneId: string,
+  provider: "gemini-nanobanana" | "gemini-nanobanana-pro",
+): Promise<z.infer<typeof GeneratedAssetSchema>> {
+  try {
+    // Enhance prompt to ensure correct vertical orientation
+    const orientedPrompt = `${scene.imagePrompt}. IMPORTANT: Create a VERTICAL PORTRAIT composition (9:16 aspect ratio) where subjects are upright and properly oriented for vertical viewing. The scene should be naturally composed for vertical/portrait orientation.`;
+
+    // Map provider to Gemini model name
+    const geminiModel = provider === "gemini-nanobanana-pro"
+      ? "gemini-3-pro-image-preview"
+      : "gemini-2.5-flash-image";
+
+    // Determine resolution based on provider
+    const resolution = provider === "gemini-nanobanana-pro" ? "2K" : "1K";
+
+    console.log(`    🎨 Generating image with Gemini ${geminiModel}...`);
+
+    // Call Gemini API
+    const result = await generateGeminiImage({
+      prompt: orientedPrompt,
+      model: geminiModel,
+      aspectRatio: "9:16", // Vertical format for TikTok/Reels
+      resolution: resolution as "1K" | "2K" | "4K",
+      responseModalities: ["IMAGE"],
+    });
+
+    return {
+      sceneId,
+      type: "image",
+      url: result.imageUrl,
+      cost: result.cost,
+      reused: false,
+    };
+  } catch (error) {
+    console.error(`Error generating Gemini image for scene ${scene.order}:`, error);
+    
+    // Provide helpful error message
+    if (error instanceof Error) {
+      if (error.message.includes("GOOGLE_GEMINI_API_KEY")) {
+        throw new Error(
+          "Gemini API key not found. Please set GOOGLE_GEMINI_API_KEY environment variable. Get one at https://aistudio.google.com/app/apikey"
+        );
+      }
+    }
+    
     throw error;
   }
 }
@@ -235,7 +324,7 @@ async function generateImageAsset(
  * @param scene - Scene with video prompt
  * @returns Generated asset with URL and cost
  */
-async function generateVideoAsset(
+async function _generateVideoAsset(
   scene: z.infer<typeof AssetSceneSchema>,
 ): Promise<z.infer<typeof GeneratedAssetSchema>> {
   const sceneId = `scene-${scene.order}`;
@@ -264,7 +353,7 @@ async function generateVideoAsset(
       ],
       // Additional parameters may be needed based on actual API
       // max_tokens, temperature, etc.
-    }) as any;
+    }) as unknown as { data?: Array<{ url?: string }>; choices?: Array<{ message?: { content?: string } }> };
 
     // Extract video URL from response
     // Note: Response structure may differ from this placeholder
@@ -310,9 +399,10 @@ async function generateVideoAsset(
 // ============================================================================
 
 /**
- * Animate a DALL-E image using MiniMax Hailuo-02 API
+ * Animate an image using MiniMax Hailuo-02 API
+ * Works with images from any provider (DALL-E 3, Gemini, etc.)
  *
- * @param imageAsset - Generated DALL-E image asset
+ * @param imageAsset - Generated image asset (from any provider)
  * @param scene - Scene with description for animation prompt
  * @returns Animated video asset with Hailuo provider
  */
@@ -320,8 +410,6 @@ async function animateImageWithHailuo(
   imageAsset: z.infer<typeof GeneratedAssetSchema>,
   scene: z.infer<typeof AssetSceneSchema>,
 ): Promise<z.infer<typeof GeneratedAssetSchema>> {
-  const startTime = Date.now();
-
   // Create animation prompt with EXPLICIT vertical/portrait orientation instructions
   const animationPrompt = `${scene.description}. CRITICAL: Maintain VERTICAL PORTRAIT orientation (9:16 aspect ratio) for mobile/TikTok format. Keep all subjects UPRIGHT and properly oriented for vertical viewing. Animate with realistic movement, natural motion, and cinematic camera work while preserving the vertical composition.`;
 
@@ -337,7 +425,7 @@ async function animateImageWithHailuo(
 
   // Calculate cost: 768p = $0.045/second × 6 seconds = $0.270
   const hailuoCost = 0.045 * 6;
-  const totalCost = imageAsset.cost + hailuoCost; // DALL-E + Hailuo
+  const totalCost = imageAsset.cost + hailuoCost; // Image generation + Hailuo animation
 
   console.log(`    ✓ Animation complete in ${generationTime.toFixed(1)}s (cost: $${hailuoCost.toFixed(3)})`);
 
@@ -363,13 +451,13 @@ async function animateImageWithHailuo(
  * For MVP: Skipping similarity search, always generating new assets
  * Future: Implement this to save costs by reusing similar assets
  *
- * @param prompt - Image prompt to search for
- * @param threshold - Similarity threshold (0.85 = 85% similar)
+ * @param _prompt - Image prompt to search for
+ * @param _threshold - Similarity threshold (0.85 = 85% similar)
  * @returns Similar asset if found, null otherwise
  */
-async function findSimilarAsset(
-  prompt: string,
-  threshold = 0.85,
+function _findSimilarAsset(
+  _prompt: string,
+  _threshold = 0.85,
 ): Promise<{ id: string; url: string; cost: number } | null> {
   // Placeholder for future implementation
   // This would:
@@ -378,7 +466,7 @@ async function findSimilarAsset(
   // 3. Return most similar asset if similarity > threshold
   // 4. Otherwise return null
 
-  return null; // For MVP, always generate new assets
+  return Promise.resolve(null); // For MVP, always generate new assets
 }
 
 // ============================================================================
@@ -390,19 +478,40 @@ async function findSimilarAsset(
  *
  * @param sceneCount - Number of scenes
  * @param withAnimation - Include Hailuo animation cost (default: true)
+ * @param imageProvider - Image generation provider (default: dall-e-3)
  * @returns Estimated cost in USD
  */
-export function estimateAssetCost(sceneCount: number, withAnimation: boolean = true): number {
-  // DALL-E 3: $0.040 per image (1024x1792, standard quality)
-  const dalleeCost = sceneCount * 0.040;
+export function estimateAssetCost(
+  sceneCount: number,
+  withAnimation: boolean = true,
+  imageProvider: ImageProvider = "gemini-nanobanana"
+): number {
+  // Calculate image generation cost based on provider
+  let imageCost: number;
+  switch (imageProvider) {
+    case "dall-e-3":
+      // DALL-E 3: $0.040 per image (1024x1792, standard quality)
+      imageCost = sceneCount * 0.040;
+      break;
+    case "gemini-nanobanana":
+      // Gemini Nano Banana: ~$0.01 per image (1K resolution)
+      imageCost = sceneCount * 0.01;
+      break;
+    case "gemini-nanobanana-pro":
+      // Gemini Nano Banana Pro: ~$0.075 per image (2K resolution)
+      imageCost = sceneCount * 0.075;
+      break;
+    default:
+      imageCost = sceneCount * 0.01; // Default to Gemini Nano Banana pricing
+  }
 
   if (withAnimation) {
     // Hailuo 768p: $0.045/second × 6 seconds = $0.270 per scene
     const hailuoCost = sceneCount * (0.045 * 6);
-    return dalleeCost + hailuoCost;
+    return imageCost + hailuoCost;
   } else {
     // Static images only
-    return dalleeCost;
+    return imageCost;
   }
 }
 

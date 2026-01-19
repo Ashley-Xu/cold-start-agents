@@ -466,14 +466,9 @@ This shows raw API requests/responses for debugging.
 
 ## API Key Types
 
-**Important:** MiniMax offers different API key types:
+**Important:** MiniMax Pay-as-you-go API key is required for video generation:
 
-### 1. Coding Plan Subscription (`MINIMAX_API_KEY_sub`)
-- ❌ **Does NOT support video generation**
-- ✅ Only covers TEXT models (MiniMax-M2.1)
-- Used for coding assistance and text processing
-
-### 2. Pay-as-you-go (`MINIMAX_API_KEY_PAY_AS_YOU_GO`)
+### Pay-as-you-go (`MINIMAX_API_KEY_PAY_AS_YOU_GO`)
 - ✅ **Required for video generation**
 - ✅ Supports Hailuo-2.3 video model
 - 💰 Requires pre-loaded balance
@@ -481,9 +476,6 @@ This shows raw API requests/responses for debugging.
 
 **Configuration:**
 ```env
-# ❌ This will NOT work for video generation
-MINIMAX_API_KEY_sub=your-coding-plan-key
-
 # ✅ Use this for Hailuo animation
 MINIMAX_API_KEY_PAY_AS_YOU_GO=your-pay-as-you-go-key
 ```

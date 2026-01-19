@@ -12,8 +12,9 @@ This project creates an automated video generation pipeline that produces short-
 
 **Key Features:**
 - 🤖 **5 AI Agents**: Story analysis, script writing, scene planning, asset generation, video assembly
+- 🎨 **Image Generation**: Gemini Nano Banana (default) or DALL-E 3 for high-quality images
 - 🎬 **AI-Powered Animation**: MiniMax Hailuo-02 API for realistic character movement and camera motion
-- 💰 **Cost-Optimized**: ~$0.14 per video with DALL-E 3 + Hailuo animation (512p)
+- 💰 **Cost-Optimized**: ~$0.10-0.14 per video with Gemini Nano Banana + Hailuo animation
 - 🎥 **Multi-Stage Approval**: Human oversight at script, storyboard, and asset stages
 - 📊 **Asset Reuse**: Neo4j-powered similarity search saves ~30% on image generation costs
 - ⚡ **Parallel Processing**: 5-10 concurrent asset generations for speed
@@ -28,7 +29,7 @@ This project creates an automated video generation pipeline that produces short-
 - **Database**: Neo4j (graph database for assets, scripts, scenes)
 - **AI Framework**: Direct OpenAI SDK integration (not using Mastra)
 - **LLM**: GPT-4o-mini for planning and scripting
-- **Image Generation**: DALL-E 3
+- **Image Generation**: Gemini Nano Banana (default) or DALL-E 3
 - **Video Animation**: MiniMax Hailuo-02 API (image-to-video animation)
 - **Audio/TTS**: ElevenLabs API
 - **Video Assembly**: FFmpeg
@@ -72,7 +73,8 @@ cold-start-agents/
 - [Docker](https://www.docker.com/) (for Neo4j)
 - [Node.js](https://nodejs.org/) 18+ (for frontend)
 - [FFmpeg](https://ffmpeg.org/) (for video assembly)
-- OpenAI API key (for DALL-E 3 image generation)
+- Google Gemini API key (for image generation) - Get at https://aistudio.google.com/app/apikey
+- OpenAI API key (optional, for DALL-E 3 image generation as alternative)
 - MiniMax API key (for Hailuo-02 video animation) - Get at https://platform.minimax.io/
 - ElevenLabs API key (for TTS narration)
 
@@ -137,27 +139,33 @@ cold-start-agents/
 3. **Select duration** (30s, 60s, or 90s)
 4. **Review and approve** the generated script
 5. **Review and approve** the storyboard (scene descriptions + image prompts)
-6. **Preview generated assets** (DALL-E 3 images)
+6. **Preview generated assets** (Gemini Nano Banana or DALL-E 3 images)
 7. **Review final video** with TTS narration and motion effects
 8. **Download or publish** the rendered MP4
 
 ### Cost Per Video
 
-- **With Hailuo Animation** (DALL-E 3 + Hailuo 512p): ~$0.14 per video
+- **With Hailuo Animation** (Gemini Nano Banana + Hailuo 768p): ~$0.10-0.14 per video
   - Script generation: $0.0003
   - Storyboard planning: $0.0001
-  - Image generation (2 scenes × $0.04): $0.08
-  - Video animation (2 scenes × $0.102): $0.20
+  - Image generation (2 scenes × $0.01 Gemini): $0.02
+  - Video animation (2 scenes × $0.27 Hailuo): $0.54
   - TTS audio: $0.05-0.10
-  - Total: **~$0.33-0.38 per video**
+  - Total: **~$0.61-0.66 per video**
 
-- **Without Animation** (static FFmpeg effects): ~$0.13-0.18 per video
-  - Image generation + TTS only
+- **With DALL-E 3** (DALL-E 3 + Hailuo 768p): ~$0.14-0.18 per video
+  - Image generation (2 scenes × $0.04 DALL-E): $0.08
+  - Video animation (2 scenes × $0.27 Hailuo): $0.54
+  - Other costs same as above
+  - Total: **~$0.67-0.72 per video**
+
+- **Without Animation** (static FFmpeg effects): ~$0.07-0.12 per video
+  - Image generation (Gemini: $0.02, DALL-E: $0.08) + TTS only
   - Fallback when MiniMax API key not configured
 
-- **Monthly Budget**:
-  - 1000 videos with animation × $0.35 avg = **~$350/month**
-  - 2000 videos with animation × $0.35 avg = **~$700/month** (still under $1000 target!)
+- **Monthly Budget** (with Gemini + Hailuo):
+  - 1000 videos with animation × $0.64 avg = **~$640/month**
+  - 2000 videos with animation × $0.64 avg = **~$1,280/month**
 
 ---
 
@@ -174,8 +182,8 @@ This section explains the complete video creation journey from the user's perspe
   - **Topic**: "A brave cat rescues a bird" (or any story idea)
   - **Language**: Chooses Chinese, English, or French
   - **Duration**: Selects 30s, 60s, or 90s
-  - **Quality**: Standard (DALL-E 3 images) or Premium (Sora videos - future)
-- Clicks "Create"
+  - **Quality**: Standard (Gemini Nano Banana images, default) or Premium (Sora videos - future)
+  - Clicks "Create"
 
 **What happens behind the scenes:**
 - Video project created in database
@@ -279,7 +287,7 @@ Scene 1: "Discovering the Bird"
 #### Step 5: Asset Generation (The Big Step!)
 **What the user does:**
 - Clicks "Generate Assets"
-- Waits 30-90 seconds (while DALL-E 3 creates images)
+- Waits 30-90 seconds (while Gemini Nano Banana or DALL-E 3 creates images)
 
 **What the user sees:**
 ```
@@ -287,8 +295,8 @@ Scene 1: "Discovering the Bird"
 ⏳ This may take 30-90 seconds
 
 Progress:
-✓ Scene 1: Image generated (1024x1792)
-✓ Scene 2: Image generated (1024x1792)
+✓ Scene 1: Image generated (Gemini Nano Banana, 1K)
+✓ Scene 2: Image generated (Gemini Nano Banana, 1K)
 ⏳ Scene 3: Generating...
 
 ✅ All Assets Generated!
@@ -299,13 +307,13 @@ Progress:
 📸 Scene 2: [Shows generated image]
 📸 Scene 3: [Shows generated image]
 
-Cost: $0.12 (3 images × $0.04)
+Cost: $0.03 (3 images × $0.01 Gemini)
 ```
 
 **User decision:**
 - ✅ Approve All → Continue to final rendering
 - 🔄 Regenerate → Click on individual images to regenerate
-- Cost so far: $0.1205
+- Cost so far: $0.0305
 
 ---
 
@@ -356,13 +364,13 @@ User Journey Timeline (Total: ~2-4 minutes active + 2-3 minutes waiting)
    ├─ Review & Approve  → 1 minute     (user reads & decides)
 4. Create Storyboard    → 18 seconds   (AI processing)
    ├─ Review & Approve  → 1 minute     (user reviews scenes)
-5. Generate Assets      → 60 seconds   (DALL-E 3 processing)
+5. Generate Assets      → 60 seconds   (Gemini/DALL-E image processing)
    ├─ Review & Approve  → 1 minute     (user reviews images)
 6. Render Video         → 60 seconds   (TTS + assembly)
 7. Download & Share     → 30 seconds   (user downloads)
 
 Total Time: ~5-7 minutes per video
-Total Cost: $0.16 per video
+Total Cost: $0.64 per video (with Gemini + Hailuo animation)
 ```
 
 ---
@@ -381,9 +389,9 @@ Total Cost: $0.16 per video
 
 **3. Professional Quality**
 - AI-generated scripts tailored to duration
-- DALL-E 3 images (1024x1792 vertical format)
+- High-quality images (Gemini Nano Banana or DALL-E 3, vertical format)
 - Professional voice narration (ElevenLabs TTS)
-- Motion effects (Ken Burns, fades, transitions)
+- AI-powered motion effects (Hailuo animation or Ken Burns)
 - Subtitles included
 
 **4. Fast & Scalable**
@@ -397,20 +405,20 @@ Total Cost: $0.16 per video
 
 **For Content Creators:**
 - Create 30 TikTok stories per month
-- Each video costs $0.16
-- Total: ~$5/month
+- Each video costs $0.64 (with animation)
+- Total: ~$19/month
 - Time saved vs manual creation: ~50 hours/month
 
 **For Language Educators:**
 - Create 100 French story videos for students
-- Each video costs $0.16
-- Total: ~$16
+- Each video costs $0.64 (with animation)
+- Total: ~$64
 - Videos include subtitles for learning
 
 **For Marketing Teams:**
 - Create 1000 product story videos
-- Each video costs $0.16
-- Total: ~$160/month (within $500 budget!)
+- Each video costs $0.64 (with animation)
+- Total: ~$640/month
 - Multilingual support (Chinese, English, French)
 
 ---
@@ -420,7 +428,7 @@ Total Cost: $0.16 per video
 **What This System Does:**
 - ✅ Generates scripts from topics
 - ✅ Creates professional storyboards
-- ✅ Generates DALL-E 3 images
+- ✅ Generates images (Gemini Nano Banana default, or DALL-E 3)
 - ✅ **Animates images with AI** (MiniMax Hailuo-02 for character/object movement)
 - ✅ Adds voice narration (TTS)
 - ✅ Adds cinematic motion effects
@@ -446,8 +454,8 @@ The system uses 5 specialized AI agents:
 
 1. **Story Analyzer Agent** - Analyzes topic and validates feasibility
 2. **Script Writer Agent** - Generates timestamped multilingual scripts
-3. **Scene Planner Agent** - Creates visual storyboard with DALL-E prompts
-4. **Asset Generator Agent** - Generates or reuses images (cost optimization)
+3. **Scene Planner Agent** - Creates visual storyboard with image generation prompts
+4. **Asset Generator Agent** - Generates images (Gemini Nano Banana or DALL-E 3) or reuses existing assets (cost optimization)
 5. **Video Assembler Agent** - Renders final video with TTS + motion effects
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed agent descriptions.
@@ -540,7 +548,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete implementation
 - [ ] Video Assembler Agent
 
 ### Phase 3: Tools Implementation (8-12 hours)
-- [ ] DALL-E 3 integration
+- [x] Gemini Nano Banana image generation integration
+- [x] DALL-E 3 integration (alternative provider)
 - [ ] ElevenLabs TTS integration
 - [ ] Neo4j asset search
 - [ ] FFmpeg video assembly
