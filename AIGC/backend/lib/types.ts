@@ -35,6 +35,7 @@ export type VideoStatus =
   | "storyboard_review"
   | "storyboard_approved"
   | "generating_assets"
+  | "images_review"
   | "assets_review"
   | "assets_approved"
   | "generating_audio"
@@ -52,7 +53,7 @@ export interface VideoProject {
   topic: string;
   language: Language;
   duration: VideoDuration;
-  isPremium: boolean; // true = use Sora, false = use DALL-E 3
+  isPremium: boolean; // true = use Sora for premium videos, false = use Gemini for images + Hailuo for animation
   status: VideoStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -204,7 +205,13 @@ export interface ApproveStoryboardResponse {
 
 export type AssetType = "image" | "video_clip" | "audio" | "music";
 
-export type AssetGenerator = "dalle3" | "sora" | "elevenlabs" | "library" | "hailuo";
+export type AssetGenerator =
+  | "gemini-2.5-flash-image"
+  | "gemini-3-pro"
+  | "sora"
+  | "elevenlabs"
+  | "library"
+  | "hailuo";
 
 export interface Asset {
   id: string;
@@ -287,7 +294,8 @@ export interface VideoStatusResponse {
 export interface CostBreakdown {
   scriptGeneration: number;
   storyboardPlanning: number;
-  assetGeneration: number;
+  imageGeneration: number;
+  animationGeneration: number;
   audioGeneration: number;
   total: number;
 }
@@ -389,18 +397,23 @@ export interface AssetGeneratorInput {
     imagePrompt: string;
   }>;
   isPremium: boolean;
-  imageProvider?: "dall-e-3" | "gemini-nanobanana" | "gemini-nanobanana-pro"; // Image generation provider
+  imageProvider?: "gemini-2.5-flash-image" | "gemini-3-pro"; // Image generation provider
 }
 
 export interface AssetGeneratorOutput {
   assets: Array<{
     sceneId: string;
+    sceneOrder?: number; // Scene order number (1-based)
     type: AssetType;
     url: string;
-    cost: number;
+    cost: number; // Total cost (image + animation)
+    imageCost?: number; // Image generation cost
+    animationCost?: number; // Animation generation cost
     reused: boolean;
-    animationProvider?: "hailuo" | "static"; // NEW - Track animation source
-    generationTime?: number; // NEW - Track generation latency
+    animationProvider?: "hailuo" | "static";
+    generationTime?: number;
+    imageProvider?: "gemini-2.5-flash-image" | "gemini-3-pro";
+    referenceImageCount?: number;
   }>;
 }
 

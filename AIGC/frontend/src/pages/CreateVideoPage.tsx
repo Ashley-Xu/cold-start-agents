@@ -1,16 +1,57 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
-import * as api from '../lib/api'
+import {
+  createVideo,
+  analyzeStory,
+  generateScript,
+  approveScript,
+  generateStoryboard,
+  approveStoryboard,
+  generateImages,
+  animateImages,
+  generateAssets,
+  approveAssets,
+  renderVideo,
+} from '../lib/api'
 import type {
   Language,
   VideoDuration,
   StoryAnalysis,
   Script,
   Storyboard,
+  StoryboardScene,
+  SceneScript,
   Asset,
   Video,
+  ImageProvider,
 } from '../lib/types'
+
+type ImageProviderKey =
+  | ImageProvider
+  | 'gemini-2.5-flash-image'
+  | 'gemini-3-pro'
+
+type AssetCostResponse = {
+  assets: Asset[]
+  totalCost: number
+  imageCost: number
+  animationCost: number
+}
+
+// Helper function to get display name for image provider
+const getImageProviderDisplayName = (provider?: ImageProviderKey): string => {
+  switch (provider) {
+    case 'dall-e-3':
+      return 'DALL-E 3'
+    case 'gemini-2.5-flash-image':
+      return 'Gemini 2.5 Flash Image'
+    case 'gemini-3-pro':
+      return 'Gemini 3 Pro'
+    default:
+      return 'Image Generator'
+  }
+}
 
 // Mock user ID for now (in a real app, this would come from auth)
 const MOCK_USER_ID = 'user-demo-123'
@@ -20,6 +61,7 @@ type Step =
   | 'analyzing'
   | 'script_review'
   | 'storyboard_review'
+  | 'images_review'
   | 'assets_review'
   | 'rendering'
   | 'complete'
@@ -28,6 +70,8 @@ export default function CreateVideoPage() {
   const [currentStep, setCurrentStep] = useState<Step>('input')
   const [videoId, setVideoId] = useState<string | null>(null)
   const [totalCost, setTotalCost] = useState(0)
+  const [imageCost, setImageCost] = useState(0)
+  const [animationCost, setAnimationCost] = useState(0)
 
   // Form inputs
   const [topic, setTopic] = useState('')
@@ -44,20 +88,19 @@ export default function CreateVideoPage() {
   // Feedback inputs
   const [analysisFeedback, setAnalysisFeedback] = useState('')
   const [scriptRevisionNotes, setScriptRevisionNotes] = useState('')
-  const [editedScenePrompts, setEditedScenePrompts] = useState<Record<string, string>>({})
   const [regeneratingAssetIndex, setRegeneratingAssetIndex] = useState<number | null>(null)
 
   // Editing modes
   const [isEditingScript, setIsEditingScript] = useState(false)
-  const [editedScript, setEditedScript] = useState<any>(null)
+  const [editedScript, setEditedScript] = useState<Script | null>(null)
   const [isEditingStoryboard, setIsEditingStoryboard] = useState(false)
-  const [editedStoryboard, setEditedStoryboard] = useState<any>(null)
+  const [editedStoryboard, setEditedStoryboard] = useState<Storyboard | null>(null)
 
   // ===== Mutations =====
 
   const createVideoMutation = useMutation({
     mutationFn: () =>
-      api.createVideo({
+      createVideo({
         topic,
         language,
         duration,
@@ -73,7 +116,7 @@ export default function CreateVideoPage() {
 
   const analyzeStoryMutation = useMutation({
     mutationFn: ({ vid, feedback }: { vid: string; feedback?: string }) =>
-      api.analyzeStory(vid, feedback),
+      analyzeStory(vid, feedback),
     onSuccess: (data) => {
       setStoryAnalysis(data)
       setTotalCost((prev) => prev + 0.0001)
@@ -83,7 +126,7 @@ export default function CreateVideoPage() {
   })
 
   const generateScriptMutation = useMutation({
-    mutationFn: () => api.generateScript(videoId!),
+    mutationFn: () => generateScript(videoId!),
     onSuccess: (data) => {
       setScript(data)
       setTotalCost((prev) => prev + 0.0003)
@@ -92,8 +135,8 @@ export default function CreateVideoPage() {
 
   const approveScriptMutation = useMutation({
     mutationFn: ({ approved, revisionNotes }: { approved: boolean; revisionNotes?: string }) =>
-      api.approveScript(videoId!, { approved, revisionNotes }),
-    onSuccess: (data, variables) => {
+      approveScript(videoId!, { approved, revisionNotes }),
+    onSuccess: (_data, variables) => {
       if (variables.approved) {
         setCurrentStep('storyboard_review')
         generateStoryboardMutation.mutate()
@@ -103,7 +146,7 @@ export default function CreateVideoPage() {
   })
 
   const generateStoryboardMutation = useMutation({
-    mutationFn: () => api.generateStoryboard(videoId!),
+    mutationFn: () => generateStoryboard(videoId!),
     onSuccess: (data) => {
       setStoryboard(data)
       setTotalCost((prev) => prev + 0.0001)
@@ -112,23 +155,54 @@ export default function CreateVideoPage() {
 
   const approveStoryboardMutation = useMutation({
     mutationFn: (approved: boolean) =>
-      api.approveStoryboard(videoId!, approved),
+      approveStoryboard(videoId!, approved),
     onSuccess: () => {
-      setCurrentStep('assets_review')
-      // Only trigger asset generation if videoId exists
+      setCurrentStep('images_review')
+      // Only trigger image generation if videoId exists
       if (videoId) {
-        generateAssetsMutation.mutate()
+        generateImagesMutation.mutate()
       } else {
-        console.error('Cannot generate assets: videoId is null')
+        console.error('Cannot generate images: videoId is null')
       }
     },
   })
 
-  const generateAssetsMutation = useMutation({
-    mutationFn: () => api.generateAssets(videoId!),
-    onSuccess: (data) => {
+  const generateImagesMutation = useMutation<AssetCostResponse>({
+    mutationFn: () => generateImages(videoId!) as Promise<AssetCostResponse>,
+    onSuccess: (data: { assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }) => {
       setAssets(data.assets)
       setTotalCost((prev) => prev + data.totalCost)
+      setImageCost((prev) => prev + data.imageCost)
+      setAnimationCost((prev) => prev + data.animationCost)
+    },
+    onError: (error) => {
+      console.error('Failed to generate images:', error)
+      // Error will be displayed in the UI via generateImagesMutation.error
+    },
+  })
+
+  const animateImagesMutation = useMutation<AssetCostResponse>({
+    mutationFn: () => animateImages(videoId!) as Promise<AssetCostResponse>,
+    onSuccess: (data: { assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }) => {
+      setAssets(data.assets)
+      // Animation response includes image + animation totals; add only new animation cost
+      setTotalCost((prev) => prev + data.animationCost)
+      setAnimationCost((prev) => prev + data.animationCost)
+      setCurrentStep('assets_review')
+    },
+    onError: (error) => {
+      console.error('Failed to animate images:', error)
+      // Error will be displayed in the UI via animateImagesMutation.error
+    },
+  })
+
+  const generateAssetsMutation = useMutation<AssetCostResponse>({
+    mutationFn: () => generateAssets(videoId!) as Promise<AssetCostResponse>,
+    onSuccess: (data: { assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }) => {
+      setAssets(data.assets)
+      setTotalCost((prev) => prev + data.totalCost)
+      setImageCost((prev) => prev + data.imageCost)
+      setAnimationCost((prev) => prev + data.animationCost)
     },
     onError: (error) => {
       console.error('Failed to generate assets:', error)
@@ -138,7 +212,7 @@ export default function CreateVideoPage() {
 
   const approveAssetsMutation = useMutation({
     mutationFn: (approved: boolean) =>
-      api.approveAssets(videoId!, approved),
+      approveAssets(videoId!, approved),
     onSuccess: () => {
       setCurrentStep('rendering')
       renderVideoMutation.mutate()
@@ -146,7 +220,7 @@ export default function CreateVideoPage() {
   })
 
   const renderVideoMutation = useMutation({
-    mutationFn: () => api.renderVideo(videoId!),
+    mutationFn: () => renderVideo(videoId!),
     onSuccess: (data) => {
       setVideo(data)
       setTotalCost((prev) => prev + data.cost)
@@ -201,8 +275,12 @@ export default function CreateVideoPage() {
     setCurrentStep('script_review')
   }
 
-  const handleBackFromAssetsReview = () => {
+  const handleBackFromImagesReview = () => {
     setCurrentStep('storyboard_review')
+  }
+
+  const handleBackFromAssetsReview = () => {
+    setCurrentStep('images_review')
   }
 
   const handleBackToInput = () => {
@@ -245,7 +323,7 @@ export default function CreateVideoPage() {
     if (editedScript) {
       setEditedScript({
         ...editedScript,
-        scenes: editedScript.scenes.map((s: any) =>
+        scenes: editedScript.scenes.map((s: SceneScript) =>
           s.id === sceneId ? { ...s, narration: newNarration } : s
         ),
       })
@@ -276,7 +354,7 @@ export default function CreateVideoPage() {
     if (editedStoryboard) {
       setEditedStoryboard({
         ...editedStoryboard,
-        scenes: editedStoryboard.scenes.map((s: any) =>
+        scenes: editedStoryboard.scenes.map((s: StoryboardScene) =>
           s.id === sceneId ? { ...s, imagePrompt: newPrompt } : s
         ),
       })
@@ -287,7 +365,7 @@ export default function CreateVideoPage() {
     if (editedStoryboard) {
       setEditedStoryboard({
         ...editedStoryboard,
-        scenes: editedStoryboard.scenes.map((s: any) =>
+        scenes: editedStoryboard.scenes.map((s: StoryboardScene) =>
           s.id === sceneId ? { ...s, description: newDescription } : s
         ),
       })
@@ -302,6 +380,7 @@ export default function CreateVideoPage() {
       { id: 'analyzing', label: 'Analyze' },
       { id: 'script_review', label: 'Script' },
       { id: 'storyboard_review', label: 'Storyboard' },
+      { id: 'images_review', label: 'Images' },
       { id: 'assets_review', label: 'Assets' },
       { id: 'rendering', label: 'Render' },
       { id: 'complete', label: 'Complete' },
@@ -452,6 +531,7 @@ export default function CreateVideoPage() {
               rows={3}
             />
             <button
+              type="button"
               onClick={() => {
                 if (videoId) {
                   analyzeStoryMutation.mutate({ vid: videoId, feedback: analysisFeedback })
@@ -469,6 +549,7 @@ export default function CreateVideoPage() {
       {!script ? (
         <div className="space-y-3">
           <button
+            type="button"
             onClick={handleGenerateScript}
             disabled={generateScriptMutation.isPending}
             className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
@@ -476,6 +557,7 @@ export default function CreateVideoPage() {
             {generateScriptMutation.isPending ? 'Generating Script...' : 'Generate Script'}
           </button>
           <button
+            type="button"
             onClick={handleBackFromScriptReview}
             className="w-full bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
           >
@@ -489,6 +571,7 @@ export default function CreateVideoPage() {
               <h3 className="font-bold text-gray-900">Generated Script</h3>
               {!isEditingScript && (
                 <button
+                  type="button"
                   onClick={handleEnableScriptEdit}
                   className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg font-semibold hover:bg-blue-700 transition-colors"
                 >
@@ -497,7 +580,7 @@ export default function CreateVideoPage() {
               )}
             </div>
             <div className="space-y-4">
-              {(isEditingScript ? editedScript?.scenes : script.scenes)?.map((scene: any) => (
+              {(isEditingScript ? editedScript?.scenes : script.scenes)?.map((scene: SceneScript) => (
                 <div key={scene.id} className="bg-white p-4 rounded-lg shadow-sm">
                   <div className="text-sm text-gray-500 mb-2">
                     Scene {scene.order} ({scene.startTime}s - {scene.endTime}s)
@@ -521,12 +604,14 @@ export default function CreateVideoPage() {
             {isEditingScript && (
               <div className="mt-4 flex gap-3">
                 <button
+                  type="button"
                   onClick={handleSaveScriptEdit}
                   className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors"
                 >
                   💾 Save Changes
                 </button>
                 <button
+                  type="button"
                   onClick={handleCancelScriptEdit}
                   className="flex-1 px-4 py-2 bg-gray-500 text-white rounded-lg font-semibold hover:bg-gray-600 transition-colors"
                 >
@@ -539,6 +624,7 @@ export default function CreateVideoPage() {
           {/* Script approval/revision section */}
           <div className="space-y-4">
             <button
+              type="button"
               onClick={handleApproveScript}
               disabled={approveScriptMutation.isPending}
               className="w-full bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 transition-colors"
@@ -547,6 +633,7 @@ export default function CreateVideoPage() {
             </button>
 
             <button
+              type="button"
               onClick={handleBackFromScriptReview}
               className="w-full bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
             >
@@ -565,6 +652,7 @@ export default function CreateVideoPage() {
                 rows={3}
               />
               <button
+                type="button"
                 onClick={handleRequestScriptRevision}
                 disabled={!scriptRevisionNotes.trim() || approveScriptMutation.isPending}
                 className="mt-2 px-4 py-2 bg-orange-600 text-white rounded-lg font-semibold hover:bg-orange-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
@@ -577,7 +665,7 @@ export default function CreateVideoPage() {
       )}
 
       <div className="mt-4 text-center text-sm text-gray-500">
-        Cost so far: ${totalCost.toFixed(4)}
+        Cost so far: Image ${imageCost.toFixed(4)} • Animation ${animationCost.toFixed(4)} • Total ${totalCost.toFixed(4)}
       </div>
     </div>
   )
@@ -600,6 +688,7 @@ export default function CreateVideoPage() {
               <h3 className="font-bold text-gray-900">{storyboard.storyboard.title}</h3>
               {!isEditingStoryboard && (
                 <button
+                  type="button"
                   onClick={handleEnableStoryboardEdit}
                   className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg font-semibold hover:bg-blue-700 transition-colors"
                 >
@@ -621,7 +710,7 @@ export default function CreateVideoPage() {
           </div>
 
           <div className="grid md:grid-cols-1 gap-4 mb-6">
-            {(isEditingStoryboard ? editedStoryboard?.scenes : storyboard.scenes)?.map((scene: any) => (
+            {(isEditingStoryboard ? editedStoryboard?.scenes : storyboard.scenes)?.map((scene: StoryboardScene) => (
               <div key={scene.id} className="border rounded-lg p-4 bg-gray-50">
                 <h4 className="font-bold text-gray-900 mb-2">
                   Scene {scene.order}: {scene.title}
@@ -641,7 +730,7 @@ export default function CreateVideoPage() {
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        DALL-E Image Prompt:
+                        Image Prompt:
                       </label>
                       <textarea
                         value={scene.imagePrompt}
@@ -660,7 +749,7 @@ export default function CreateVideoPage() {
                   <>
                     <p className="text-sm text-gray-700 mb-3">{scene.description}</p>
                     <div className="mb-3 p-3 bg-white rounded border border-purple-200">
-                      <div className="text-xs font-semibold text-purple-700 mb-1">DALL-E Prompt:</div>
+                      <div className="text-xs font-semibold text-purple-700 mb-1">Image Prompt:</div>
                       <p className="text-sm text-gray-700">{scene.imagePrompt}</p>
                     </div>
                     <div className="text-xs text-gray-500 space-y-1">
@@ -677,12 +766,14 @@ export default function CreateVideoPage() {
           {isEditingStoryboard && (
             <div className="mb-4 flex gap-3">
               <button
+                type="button"
                 onClick={handleSaveStoryboardEdit}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors"
               >
                 💾 Save Changes
               </button>
               <button
+                type="button"
                 onClick={handleCancelStoryboardEdit}
                 className="flex-1 px-4 py-2 bg-gray-500 text-white rounded-lg font-semibold hover:bg-gray-600 transition-colors"
               >
@@ -693,16 +784,18 @@ export default function CreateVideoPage() {
 
           <div className="space-y-3">
             <button
+              type="button"
               onClick={handleApproveStoryboard}
               disabled={approveStoryboardMutation.isPending}
               className="w-full bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 transition-colors"
             >
               {approveStoryboardMutation.isPending
                 ? 'Approving...'
-                : 'Approve Storyboard & Generate Assets'}
+                : 'Approve Storyboard & Generate Images'}
             </button>
 
             <button
+              type="button"
               onClick={handleBackFromStoryboardReview}
               className="w-full bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
             >
@@ -713,7 +806,123 @@ export default function CreateVideoPage() {
       )}
 
       <div className="mt-4 text-center text-sm text-gray-500">
-        Cost so far: ${totalCost.toFixed(4)}
+        Cost so far: Image ${imageCost.toFixed(4)} • Animation ${animationCost.toFixed(4)} • Total ${totalCost.toFixed(4)}
+      </div>
+    </div>
+  )
+
+  const renderImagesReview = () => (
+    <div className="bg-white rounded-lg shadow-lg p-8 max-w-4xl mx-auto">
+      <h2 className="text-2xl font-bold text-gray-900 mb-6">
+        Step 4: Preview Generated Images
+      </h2>
+
+      {generateImagesMutation.isError ? (
+        <div className="text-center p-6 bg-red-50 border border-red-200 rounded-lg">
+          <div className="text-red-600 text-xl mb-2">❌ Error Generating Images</div>
+          <p className="text-red-700 mb-4">
+            {generateImagesMutation.error instanceof Error
+              ? generateImagesMutation.error.message
+              : 'Failed to generate images. Please try again.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => generateImagesMutation.mutate()}
+            disabled={generateImagesMutation.isPending}
+            className="px-6 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {generateImagesMutation.isPending ? 'Retrying...' : 'Retry Generation'}
+          </button>
+          <button
+            type="button"
+            onClick={handleBackFromStoryboardReview}
+            className="ml-3 px-6 py-2 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+          >
+            ← Back to Storyboard
+          </button>
+        </div>
+      ) : !assets && generateImagesMutation.isPending ? (
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 mb-2">Generating images...</p>
+          <p className="text-sm text-gray-500">This may take 30-90 seconds</p>
+        </div>
+      ) : !assets ? (
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">Image generation not started yet.</p>
+          <button
+            type="button"
+            onClick={() => generateImagesMutation.mutate()}
+            disabled={generateImagesMutation.isPending}
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {generateImagesMutation.isPending ? 'Generating...' : 'Generate Images'}
+          </button>
+        </div>
+      ) : (
+        <div>
+          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-gray-700">
+              <strong>📸 Images Generated:</strong> Review the generated images below. Once approved, they will be animated with Hailuo.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-4 mb-6">
+            {assets.map((asset, index) => (
+              <div key={asset.sceneId} className="border rounded-lg p-4 bg-gray-50">
+                <div className="aspect-video bg-gray-200 rounded mb-3 flex items-center justify-center overflow-hidden">
+                  <img
+                    src={asset.url}
+                    alt={`Scene ${index + 1}`}
+                    className="w-full h-full object-cover rounded"
+                  />
+                </div>
+                <div className="text-sm text-gray-600 mb-2">
+                  Scene {index + 1} | ${asset.cost.toFixed(2)}
+                  {asset.imageProvider && (
+                    <span className="ml-2 text-blue-600 font-semibold text-xs">
+                      {getImageProviderDisplayName(asset.imageProvider)}
+                    </span>
+                  )}
+                  {asset.referenceImageCount !== undefined && asset.referenceImageCount > 0 && (
+                    <span className="ml-1 text-purple-600 font-semibold text-xs">
+                      ({asset.referenceImageCount} ref{asset.referenceImageCount > 1 ? 's' : ''})
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (videoId) {
+                  animateImagesMutation.mutate()
+                }
+              }}
+              disabled={animateImagesMutation.isPending || !assets || assets.length === 0}
+              className="w-full bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            >
+              {animateImagesMutation.isPending
+                ? 'Animating Images...'
+                : 'Approve Images & Animate'}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleBackFromImagesReview}
+              className="w-full bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+            >
+              ← Back to Storyboard
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 text-center text-sm text-gray-500">
+        Cost so far: Image ${imageCost.toFixed(4)} • Animation ${animationCost.toFixed(4)} • Total ${totalCost.toFixed(4)}
       </div>
     </div>
   )
@@ -733,6 +942,7 @@ export default function CreateVideoPage() {
               : 'Failed to generate assets. Please try again.'}
           </p>
           <button
+            type="button"
             onClick={() => generateAssetsMutation.mutate()}
             disabled={generateAssetsMutation.isPending}
             className="px-6 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
@@ -740,6 +950,7 @@ export default function CreateVideoPage() {
             {generateAssetsMutation.isPending ? 'Retrying...' : 'Retry Generation'}
           </button>
           <button
+            type="button"
             onClick={handleBackFromAssetsReview}
             className="ml-3 px-6 py-2 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
           >
@@ -749,13 +960,14 @@ export default function CreateVideoPage() {
       ) : !assets && generateAssetsMutation.isPending ? (
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 mb-2">Generating assets with DALL-E 3...</p>
+          <p className="text-gray-600 mb-2">Generating assets...</p>
           <p className="text-sm text-gray-500">This may take 30-90 seconds</p>
         </div>
       ) : !assets ? (
         <div className="text-center">
           <p className="text-gray-600 mb-4">Assets generation not started yet.</p>
           <button
+            type="button"
             onClick={() => generateAssetsMutation.mutate()}
             disabled={generateAssetsMutation.isPending}
             className="px-6 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
@@ -790,6 +1002,16 @@ export default function CreateVideoPage() {
                 </div>
                 <div className="text-sm text-gray-600 mb-2">
                   Scene {index + 1} | ${asset.cost.toFixed(2)}
+                  {asset.imageProvider && (
+                    <span className="ml-2 text-blue-600 font-semibold text-xs">
+                      {getImageProviderDisplayName(asset.imageProvider)}
+                    </span>
+                  )}
+                  {asset.referenceImageCount !== undefined && asset.referenceImageCount > 0 && (
+                    <span className="ml-1 text-purple-600 font-semibold text-xs">
+                      ({asset.referenceImageCount} ref{asset.referenceImageCount > 1 ? 's' : ''})
+                    </span>
+                  )}
                   {asset.type === 'video_clip' && (
                     <span className="ml-2 text-purple-600 font-semibold">🎬 Animated</span>
                   )}
@@ -798,6 +1020,7 @@ export default function CreateVideoPage() {
                   )}
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     setRegeneratingAssetIndex(index)
                     // TODO: Implement asset regeneration API call
@@ -818,6 +1041,7 @@ export default function CreateVideoPage() {
 
           <div className="space-y-3">
             <button
+              type="button"
               onClick={handleApproveAssets}
               disabled={approveAssetsMutation.isPending}
               className="w-full bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 transition-colors"
@@ -826,6 +1050,7 @@ export default function CreateVideoPage() {
             </button>
 
             <button
+              type="button"
               onClick={handleBackFromAssetsReview}
               className="w-full bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
             >
@@ -836,7 +1061,7 @@ export default function CreateVideoPage() {
       )}
 
       <div className="mt-4 text-center text-sm text-gray-500">
-        Cost so far: ${totalCost.toFixed(4)}
+        Cost so far: Image ${imageCost.toFixed(4)} • Animation ${animationCost.toFixed(4)} • Total ${totalCost.toFixed(4)}
       </div>
     </div>
   )
@@ -855,6 +1080,7 @@ export default function CreateVideoPage() {
       <div className="mt-6 pt-6 border-t">
         <p className="text-sm text-gray-500 mb-3">Need to make changes?</p>
         <button
+          type="button"
           onClick={handleBackToAssetsReview}
           className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg font-medium hover:bg-gray-300 transition-colors"
         >
@@ -899,11 +1125,25 @@ export default function CreateVideoPage() {
                 <span className="text-gray-600">Format:</span>
                 <span className="font-semibold">{video.format}</span>
               </div>
-              <div className="flex justify-between border-t pt-2 mt-2">
-                <span className="text-gray-600">Total Cost:</span>
-                <span className="font-bold text-green-600">
-                  ${totalCost.toFixed(4)}
-                </span>
+              <div className="border-t pt-2 mt-2 space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Image Generation:</span>
+                  <span className="font-semibold text-blue-600">
+                    ${imageCost.toFixed(4)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Animation:</span>
+                  <span className="font-semibold text-purple-600">
+                    ${animationCost.toFixed(4)}
+                  </span>
+                </div>
+                <div className="flex justify-between border-t pt-1 mt-1">
+                  <span className="text-gray-600 font-semibold">Total Cost:</span>
+                  <span className="font-bold text-green-600">
+                    ${totalCost.toFixed(4)}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -917,24 +1157,28 @@ export default function CreateVideoPage() {
             </p>
             <div className="grid grid-cols-2 gap-2">
               <button
+                type="button"
                 onClick={handleBackToInput}
                 className="text-sm bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors"
               >
                 📝 Edit Topic
               </button>
               <button
+                type="button"
                 onClick={handleBackToScriptReview}
                 className="text-sm bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors"
               >
                 📜 Edit Script
               </button>
               <button
+                type="button"
                 onClick={handleBackToStoryboardReview}
                 className="text-sm bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors"
               >
                 🎬 Edit Storyboard
               </button>
               <button
+                type="button"
                 onClick={handleBackToAssetsReview}
                 className="text-sm bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors"
               >
@@ -973,7 +1217,14 @@ export default function CreateVideoPage() {
               View in Library
             </Link>
             <button
-              onClick={() => window.location.reload()}
+              type="button"
+              onClick={() => {
+                // Browser environment - use location API for page reload
+                const browserWindow = globalThis as typeof globalThis & { location?: { reload: () => void } }
+                if (browserWindow.location) {
+                  browserWindow.location.reload()
+                }
+              }}
               className="flex-1 bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors"
             >
               Create Another Video
@@ -993,6 +1244,7 @@ export default function CreateVideoPage() {
         {currentStep === 'analyzing' && renderAnalyzing()}
         {currentStep === 'script_review' && renderScriptReview()}
         {currentStep === 'storyboard_review' && renderStoryboardReview()}
+        {currentStep === 'images_review' && renderImagesReview()}
         {currentStep === 'assets_review' && renderAssetsReview()}
         {currentStep === 'rendering' && renderRendering()}
         {currentStep === 'complete' && renderComplete()}

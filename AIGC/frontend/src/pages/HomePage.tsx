@@ -67,7 +67,7 @@ export default function HomePage() {
               <div className="text-3xl mb-3">💰</div>
               <h4 className="font-bold text-gray-900 mb-2">Cost-Optimized</h4>
               <p className="text-sm text-gray-600">
-                &lt;$0.35 per video using DALL-E 3 + FFmpeg instead of expensive video APIs
+                &lt;$0.35 per video using AI image generation + FFmpeg instead of expensive video APIs
               </p>
             </div>
             <div className="bg-white rounded-lg p-6 shadow">

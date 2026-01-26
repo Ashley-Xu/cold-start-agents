@@ -33,7 +33,7 @@ import type {
   ScenePlannerInput,
   ScenePlannerOutput,
 } from "./ai/agents/scenePlanner.ts";
-import { generateAssets } from "./ai/agents/assetGenerator.ts";
+import { generateAssets, generateImagesOnly, animateImages } from "./ai/agents/assetGenerator.ts";
 import type {
   AssetGeneratorInput,
   AssetGeneratorOutput,
@@ -1164,8 +1164,14 @@ async function handler(req: Request): Promise<Response> {
         for (const asset of assetsOutput.assets) {
           const assetId = generateId();
 
-          // Find the corresponding scene in the database
-          const sceneOrder = parseInt(asset.sceneId.replace("scene-", ""));
+          // Find the corresponding scene in the database using sceneOrder
+          const sceneOrder = asset.sceneOrder || parseInt(asset.sceneId.replace("scene-", "") || "0");
+          
+          if (!sceneOrder || sceneOrder <= 0) {
+            console.warn(`⚠️  Invalid scene order for asset ${asset.sceneId}, skipping asset storage`);
+            continue;
+          }
+          
           const sceneResult = await session.run(
             `MATCH (sb:Storyboard {id: $storyboardId})-[:HAS_SCENE]->(sc:StoryboardScene {order: $order})
              RETURN sc`,
@@ -1187,7 +1193,7 @@ async function handler(req: Request): Promise<Response> {
                sceneOrder: $sceneOrder,
                type: $type,
                url: $url,
-               generatedBy: 'dalle3',
+               generatedBy: $generatedBy,
                cost: $cost,
                tags: [],
                reuseCount: 0,
@@ -1202,6 +1208,7 @@ async function handler(req: Request): Promise<Response> {
               sceneOrder: sceneOrder,
               type: asset.type,
               url: asset.url,
+              generatedBy: asset.imageProvider || "gemini-3-pro",
               cost: asset.cost,
             },
           );
@@ -1217,15 +1224,402 @@ async function handler(req: Request): Promise<Response> {
 
         console.log(`✅ Assets stored in database. Video status: assets_review`);
 
+        const totalCost = assetsOutput.assets.reduce((sum, a) => sum + a.cost, 0);
+        const imageCost = assetsOutput.assets.reduce(
+          (sum, a) => sum + (a.imageCost ?? (a.type === "image" ? a.cost : a.cost - (a.animationCost ?? 0))),
+          0,
+        );
+        const animationCost = assetsOutput.assets.reduce(
+          (sum, a) => sum + (a.animationCost ?? 0),
+          0,
+        );
+
         return successResponse({
           assets: assetsOutput.assets,
-          totalCost: assetsOutput.assets.reduce((sum, a) => sum + a.cost, 0),
+          totalCost,
+          imageCost,
+          animationCost,
         });
       } finally {
         await session.close();
       }
     } catch (error) {
       console.error("Error generating assets:", error);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return errorResponse(message, 500, "SERVER_ERROR");
+    }
+  }
+
+  // POST /api/videos/:videoId/generate-images - Generate images only (no animation)
+  if (
+    path.match(/^\/api\/videos\/[^/]+\/generate-images$/) && method === "POST"
+  ) {
+    try {
+      const videoId = path.split("/")[3];
+      const session = getSession();
+
+      try {
+        // Fetch video project and its approved storyboard with scenes
+        const result = await session.run(
+          `MATCH (v:VideoProject {id: $videoId})-[:HAS_STORYBOARD]->(sb:Storyboard)
+           MATCH (sb)-[:HAS_SCENE]->(sc:StoryboardScene)
+           WITH v, sb, sc
+           ORDER BY sc.order
+           WITH v, sb, collect(sc) as scenes
+           RETURN v, sb, scenes`,
+          { videoId },
+        );
+
+        if (result.records.length === 0) {
+          return errorResponse("Video or storyboard not found", 404, "NOT_FOUND");
+        }
+
+        const record = result.records[0];
+        const videoProps = record.get("v").properties;
+        const storyboardProps = record.get("sb").properties;
+        const scenes = record.get("scenes").map((sceneNode: any) =>
+          sceneNode.properties
+        );
+
+        // Check if video is in correct status
+        const validStatuses = ["storyboard_approved", "images_review", "assets_review", "assets_approved", "rendering", "complete"];
+        if (!validStatuses.includes(videoProps.status)) {
+          return errorResponse(
+            `Cannot generate images. Video status is '${videoProps.status}' but must be one of: ${validStatuses.join(", ")}`,
+            400,
+            "INVALID_STATUS",
+          );
+        }
+
+        // If regenerating, delete old image assets first
+        if (videoProps.status !== "storyboard_approved") {
+          console.log(`🗑️  Deleting old image assets before regeneration...`);
+          await session.run(
+            `MATCH (v:VideoProject {id: $videoId})-[:HAS_ASSET]->(a:Asset)
+             WHERE a.type = 'image'
+             DETACH DELETE a`,
+            { videoId },
+          );
+        }
+
+        console.log(
+          `📸 Generating images for video ${videoId} with ${scenes.length} scenes...`,
+        );
+
+        // Prepare Asset Generator input from storyboard scenes
+        const assetsInput: AssetGeneratorInput = {
+          scenes: scenes.map((sc: any) => ({
+            order: typeof sc.order === "number" ? sc.order : sc.order.toNumber(),
+            description: sc.description,
+            imagePrompt: sc.imagePrompt,
+          })),
+          isPremium: videoProps.isPremium || false,
+        };
+
+        // Generate images only (with detailed error handling)
+        let assetsOutput: AssetGeneratorOutput;
+        try {
+          assetsOutput = await generateImagesOnly(assetsInput);
+          console.log(`✅ Images generated: ${assetsOutput.assets.length}`);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+          // Provide user-friendly error message for content policy violations
+          if (errorMessage.includes("content filters")) {
+            console.error("❌ Image generation blocked by content filters");
+            return errorResponse(
+              "OpenAI blocked the image generation due to content policy violations. Please try a different topic or style. Avoid violent, adult, or otherwise inappropriate content.",
+              400,
+              "CONTENT_POLICY_VIOLATION",
+            );
+          }
+
+          console.error("❌ Image generation failed:", errorMessage);
+          return errorResponse(
+            `Failed to generate images: ${errorMessage}`,
+            500,
+            "IMAGE_GENERATION_FAILED",
+          );
+        }
+
+        // Store Asset nodes in database (as images only)
+        console.log(`📝 Storing ${assetsOutput.assets.length} images...`);
+
+        for (const asset of assetsOutput.assets) {
+          const assetId = generateId();
+
+          // Find the corresponding scene in the database using sceneOrder
+          const sceneOrder = asset.sceneOrder || parseInt(asset.sceneId.replace("scene-", "") || "0");
+          
+          if (!sceneOrder || sceneOrder <= 0) {
+            console.warn(`⚠️  Invalid scene order for asset ${asset.sceneId}, skipping asset storage`);
+            continue;
+          }
+          
+          const sceneResult = await session.run(
+            `MATCH (sb:Storyboard {id: $storyboardId})-[:HAS_SCENE]->(sc:StoryboardScene {order: $order})
+             RETURN sc`,
+            { storyboardId: storyboardProps.id, order: sceneOrder },
+          );
+
+          if (sceneResult.records.length === 0) {
+            console.warn(`⚠️  Scene ${sceneOrder} not found, skipping asset storage`);
+            continue;
+          }
+
+          const actualSceneId = sceneResult.records[0].get("sc").properties.id;
+
+          await session.run(
+            `MATCH (v:VideoProject {id: $videoId})
+             CREATE (a:Asset {
+               id: $assetId,
+               sceneId: $sceneId,
+               sceneOrder: $sceneOrder,
+               type: $type,
+               url: $url,
+               generatedBy: $generatedBy,
+               cost: $cost,
+               tags: [],
+               reuseCount: 0,
+               createdAt: datetime()
+             })
+             CREATE (v)-[:HAS_ASSET]->(a)
+             RETURN a`,
+            {
+              videoId,
+              assetId,
+              sceneId: actualSceneId,
+              sceneOrder: sceneOrder,
+              type: "image",
+              url: asset.url,
+              generatedBy: asset.imageProvider || "gemini-3-pro",
+              cost: asset.cost,
+            },
+          );
+        }
+
+        // Update video status to images_review (new status for image preview)
+        await session.run(
+          `MATCH (v:VideoProject {id: $videoId})
+           SET v.status = 'images_review', v.updatedAt = datetime()
+           RETURN v`,
+          { videoId },
+        );
+
+        console.log(`✅ Images stored in database. Video status: images_review`);
+
+        const totalCost = assetsOutput.assets.reduce((sum, a) => sum + a.cost, 0);
+        const imageCost = assetsOutput.assets.reduce(
+          (sum, a) => sum + (a.imageCost ?? (a.type === "image" ? a.cost : a.cost - (a.animationCost ?? 0))),
+          0,
+        );
+        const animationCost = assetsOutput.assets.reduce(
+          (sum, a) => sum + (a.animationCost ?? 0),
+          0,
+        );
+
+        return successResponse({
+          assets: assetsOutput.assets,
+          totalCost,
+          imageCost,
+          animationCost,
+        });
+      } finally {
+        await session.close();
+      }
+    } catch (error) {
+      console.error("Error generating images:", error);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return errorResponse(message, 500, "SERVER_ERROR");
+    }
+  }
+
+  // POST /api/videos/:videoId/animate-images - Animate existing images
+  if (
+    path.match(/^\/api\/videos\/[^/]+\/animate-images$/) && method === "POST"
+  ) {
+    try {
+      const videoId = path.split("/")[3];
+      const session = getSession();
+
+      try {
+        // Fetch video project, storyboard scenes, and existing image assets
+        const result = await session.run(
+          `MATCH (v:VideoProject {id: $videoId})-[:HAS_STORYBOARD]->(sb:Storyboard)
+           MATCH (sb)-[:HAS_SCENE]->(sc:StoryboardScene)
+           OPTIONAL MATCH (v)-[:HAS_ASSET]->(a:Asset)
+           WHERE a.type = 'image'
+           WITH v, sb, sc, a
+           ORDER BY sc.order, a.sceneOrder
+           WITH v, sb, collect(DISTINCT sc) as scenes, collect(DISTINCT a) as imageAssets
+           RETURN v, sb, scenes, imageAssets`,
+          { videoId },
+        );
+
+        if (result.records.length === 0) {
+          return errorResponse("Video or storyboard not found", 404, "NOT_FOUND");
+        }
+
+        const record = result.records[0];
+        const videoProps = record.get("v").properties;
+        const storyboardProps = record.get("sb").properties;
+        const scenes = record.get("scenes").map((sceneNode: any) =>
+          sceneNode.properties
+        );
+        const imageAssets = record.get("imageAssets").filter((a: any) => a !== null).map((assetNode: any) =>
+          assetNode.properties
+        );
+
+        // Check if video is in correct status
+        const validStatuses = ["images_review", "assets_review", "assets_approved", "rendering", "complete"];
+        if (!validStatuses.includes(videoProps.status)) {
+          return errorResponse(
+            `Cannot animate images. Video status is '${videoProps.status}' but must be one of: ${validStatuses.join(", ")}`,
+            400,
+            "INVALID_STATUS",
+          );
+        }
+
+        if (imageAssets.length === 0) {
+          return errorResponse(
+            "No image assets found. Please generate images first.",
+            400,
+            "NO_IMAGES",
+          );
+        }
+
+        console.log(
+          `🎬 Animating ${imageAssets.length} images for video ${videoId}...`,
+        );
+
+        // Prepare scenes and assets for animation
+        const scenesForAnimation = scenes.map((sc: any) => ({
+          order: typeof sc.order === "number" ? sc.order : sc.order.toNumber(),
+          description: sc.description,
+          imagePrompt: sc.imagePrompt,
+        }));
+
+        const assetsForAnimation = imageAssets.map((asset: any) => ({
+          sceneId: asset.sceneId || `scene-${asset.sceneOrder}`,
+          sceneOrder: asset.sceneOrder || parseInt((asset.sceneId || "").replace("scene-", "") || "0"),
+          type: "image" as const,
+          url: asset.url,
+          cost: asset.cost || 0,
+          reused: false,
+          imageProvider: asset.generatedBy as any,
+        }));
+
+        // Animate images
+        let assetsOutput: AssetGeneratorOutput;
+        try {
+          assetsOutput = await animateImages(assetsForAnimation, scenesForAnimation);
+          console.log(`✅ Images animated: ${assetsOutput.assets.length}`);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          console.error("❌ Animation failed:", errorMessage);
+          return errorResponse(
+            `Failed to animate images: ${errorMessage}`,
+            500,
+            "ANIMATION_FAILED",
+          );
+        }
+
+        // Delete old image assets and store animated assets
+        console.log(`📝 Storing ${assetsOutput.assets.length} animated assets...`);
+
+        // Delete old image assets
+        await session.run(
+          `MATCH (v:VideoProject {id: $videoId})-[:HAS_ASSET]->(a:Asset)
+           WHERE a.type = 'image'
+           DETACH DELETE a`,
+          { videoId },
+        );
+
+        // Store animated assets
+        for (const asset of assetsOutput.assets) {
+          const assetId = generateId();
+
+          // Find the corresponding scene in the database using sceneOrder
+          const sceneOrder = asset.sceneOrder || parseInt(asset.sceneId.replace("scene-", "") || "0");
+          
+          if (!sceneOrder || sceneOrder <= 0) {
+            console.warn(`⚠️  Invalid scene order for asset ${asset.sceneId}, skipping asset storage`);
+            continue;
+          }
+          
+          const sceneResult = await session.run(
+            `MATCH (sb:Storyboard {id: $storyboardId})-[:HAS_SCENE]->(sc:StoryboardScene {order: $order})
+             RETURN sc`,
+            { storyboardId: storyboardProps.id, order: sceneOrder },
+          );
+
+          if (sceneResult.records.length === 0) {
+            console.warn(`⚠️  Scene ${sceneOrder} not found, skipping asset storage`);
+            continue;
+          }
+
+          const actualSceneId = sceneResult.records[0].get("sc").properties.id;
+
+          await session.run(
+            `MATCH (v:VideoProject {id: $videoId})
+             CREATE (a:Asset {
+               id: $assetId,
+               sceneId: $sceneId,
+               sceneOrder: $sceneOrder,
+               type: $type,
+               url: $url,
+               generatedBy: $generatedBy,
+               cost: $cost,
+               tags: [],
+               reuseCount: 0,
+               createdAt: datetime()
+             })
+             CREATE (v)-[:HAS_ASSET]->(a)
+             RETURN a`,
+            {
+              videoId,
+              assetId,
+              sceneId: actualSceneId,
+              sceneOrder: sceneOrder,
+              type: asset.type,
+              url: asset.url,
+              generatedBy: asset.imageProvider || "gemini-3-pro",
+              cost: asset.cost,
+            },
+          );
+        }
+
+        // Update video status to assets_review
+        await session.run(
+          `MATCH (v:VideoProject {id: $videoId})
+           SET v.status = 'assets_review', v.updatedAt = datetime()
+           RETURN v`,
+          { videoId },
+        );
+
+        console.log(`✅ Animated assets stored in database. Video status: assets_review`);
+
+        const totalCost = assetsOutput.assets.reduce((sum, a) => sum + a.cost, 0);
+        const imageCost = assetsOutput.assets.reduce(
+          (sum, a) => sum + (a.imageCost ?? (a.type === "image" ? a.cost : a.cost - (a.animationCost ?? 0))),
+          0,
+        );
+        const animationCost = assetsOutput.assets.reduce(
+          (sum, a) => sum + (a.animationCost ?? 0),
+          0,
+        );
+
+        return successResponse({
+          assets: assetsOutput.assets,
+          totalCost,
+          imageCost,
+          animationCost,
+        });
+      } finally {
+        await session.close();
+      }
+    } catch (error) {
+      console.error("Error animating images:", error);
       const message = error instanceof Error ? error.message : "Unknown error";
       return errorResponse(message, 500, "SERVER_ERROR");
     }

@@ -286,7 +286,7 @@ function buildStoryboardPrompt(
 
   prompt += `\nCREATE A STORYBOARD WITH:\n`;
   prompt += `- Consistent visual style across all ${scenes.length} scenes\n`;
-  prompt += `- Detailed DALL-E 3 prompts for each scene (vertical format, 9:16)\n`;
+  prompt += `- Detailed Gemini-Nanobanana prompts for each scene (vertical format, 9:16)\n`;
   prompt += `- Professional camera angles and composition\n`;
   prompt += `- Cohesive color palette and lighting\n`;
   prompt += `- Smooth transitions between scenes\n\n`;

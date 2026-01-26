@@ -134,10 +134,32 @@ export async function approveStoryboard(
 // Asset Endpoints
 // ============================================================================
 
+export async function generateImages(
+  videoId: string
+): Promise<{ assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }> {
+  return fetchJSON<{ assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }>(
+    `/api/videos/${videoId}/generate-images`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function animateImages(
+  videoId: string
+): Promise<{ assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }> {
+  return fetchJSON<{ assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }>(
+    `/api/videos/${videoId}/animate-images`,
+    {
+      method: "POST",
+    }
+  );
+}
+
 export async function generateAssets(
   videoId: string
-): Promise<{ assets: Asset[]; totalCost: number }> {
-  return fetchJSON<{ assets: Asset[]; totalCost: number }>(
+): Promise<{ assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }> {
+  return fetchJSON<{ assets: Asset[]; totalCost: number; imageCost: number; animationCost: number }>(
     `/api/videos/${videoId}/generate-assets`,
     {
       method: "POST",

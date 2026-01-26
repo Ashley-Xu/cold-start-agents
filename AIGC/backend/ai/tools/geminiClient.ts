@@ -123,16 +123,41 @@ export async function generateImage(
       // Fetch and encode reference images
       const imageParts = await Promise.all(
         validatedInput.referenceImages.map(async (url) => {
-          const response = await fetch(url);
-          const arrayBuffer = await response.arrayBuffer();
-          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-          const mimeType = response.headers.get("content-type") || "image/jpeg";
-          return {
-            inlineData: {
-              data: base64,
-              mimeType: mimeType,
-            },
-          };
+          // Handle data URLs (base64 encoded images)
+          if (url.startsWith('data:')) {
+            // Extract base64 data and mime type from data URL
+            const dataUrlMatch = url.match(/^data:([^;]+);base64,(.+)$/);
+            if (dataUrlMatch) {
+              const mimeType = dataUrlMatch[1] || "image/png";
+              const base64 = dataUrlMatch[2];
+              return {
+                inlineData: {
+                  data: base64,
+                  mimeType: mimeType,
+                },
+              };
+            } else {
+              throw new Error(`Invalid data URL format: ${url.substring(0, 50)}...`);
+            }
+          } else {
+            // Regular URL - fetch and encode
+            const response = await fetch(url);
+            if (!response.ok) {
+              throw new Error(`Failed to fetch reference image from ${url}: ${response.statusText}`);
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            
+            const base64 = btoa(String.fromCharCode(...uint8Array));
+            
+            const mimeType = response.headers.get("content-type") || "image/jpeg";
+            return {
+              inlineData: {
+                data: base64,
+                mimeType: mimeType,
+              },
+            };
+          }
         })
       );
       requestBody.contents[0].parts.push(...imageParts);
@@ -143,12 +168,6 @@ export async function generateImage(
   const modelName = validatedInput.model;
   const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  // Log the request for debugging (without sensitive data)
-  console.log("Gemini API Request:", JSON.stringify({
-    model: modelName,
-    contents: requestBody.contents,
-    generationConfig: requestBody.generationConfig,
-  }, null, 2));
 
   const response = await fetch(apiUrl, {
     method: "POST",
@@ -160,31 +179,17 @@ export async function generateImage(
 
   if (!response.ok) {
     const errorText = await response.text();
-    let errorMessage = `Gemini API error: ${response.status} ${errorText}`;
+    let errorMessage = `Gemini API error: ${response.status}`;
     
     try {
       const errorJson = JSON.parse(errorText);
-      console.error("Full Gemini API error response:", JSON.stringify(errorJson, null, 2));
-      
       if (errorJson.error?.message) {
         errorMessage = `Gemini API error: ${errorJson.error.message}`;
       }
-      // Log the full error details for debugging
-      if (errorJson.error?.details) {
-        console.error("Gemini API error details:", JSON.stringify(errorJson.error.details, null, 2));
-      }
-      // Check for field-specific errors
-      if (errorJson.error?.status === "INVALID_ARGUMENT") {
-        console.error("INVALID_ARGUMENT - Check which field is causing the issue above");
-      }
+      console.error("Gemini API error:", errorJson.error);
     } catch {
-      // Keep original error message if JSON parsing fails
-      console.error("Raw error response (not JSON):", errorText);
+      console.error("Error response:", errorText);
     }
-    
-    // Log the request body for debugging (without the API key)
-    const debugBody = { ...requestBody };
-    console.error("Request body sent to Gemini API:", JSON.stringify(debugBody, null, 2));
     
     throw new Error(errorMessage);
   }
@@ -204,8 +209,6 @@ export async function generateImage(
   const imageData = imagePart.inlineData?.data;
   const mimeType = imagePart.inlineData?.mimeType || "image/png";
 
-  // If image is returned as base64, we may need to upload it or return it directly
-  // For now, we'll return the base64 data as a data URL
   const imageUrl = imageData
     ? `data:${mimeType};base64,${imageData}`
     : imagePart.url || "";

@@ -14,6 +14,7 @@ export type VideoStatus =
   | "storyboard_review"
   | "storyboard_approved"
   | "generating_assets"
+  | "images_review"
   | "assets_review"
   | "assets_approved"
   | "generating_audio"
@@ -103,12 +104,20 @@ export interface Storyboard {
 
 export type AssetType = "image" | "video_clip" | "audio" | "music";
 
+export type ImageProvider = "dall-e-3" | "gemini-2.5-flash-image" | "gemini-3-pro";
+
 export interface Asset {
   sceneId: string;
   type: AssetType;
   url: string;
-  cost: number;
+  cost: number; // Total cost (image + animation)
+  imageCost?: number;
+  animationCost?: number;
   reused: boolean;
+  imageProvider?: ImageProvider;
+  referenceImageCount?: number;
+  animationProvider?: "hailuo" | "static";
+  generationTime?: number;
 }
 
 // ============================================================================
