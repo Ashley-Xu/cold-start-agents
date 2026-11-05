@@ -1,0 +1,22 @@
+[project]
+name = "speech-ratio"
+version = "0.1.0"
+description = "Compute the fraction of a video's runtime that contains human speech using Silero VAD."
+requires-python = ">=3.10"
+dependencies = [
+    "silero-vad>=5.1.2",
+    "torch>=2.2",
+    "numpy>=1.24",
+    "yt-dlp>=2024.8.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
