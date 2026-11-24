@@ -19,7 +19,8 @@ SEARCH_QUOTA_UNITS = 100
 # search.list's "short" bucket is under 4 minutes. Match the repo's Shorts cutoff.
 SHORTS_MAX_SECONDS = 60
 ROOT = Path(__file__).resolve().parent
-STATE_PATH = ROOT / ".search_state.json"
+RUN_PATH = ROOT / ".search_run"
+HISTORY_PATH = ROOT / ".search_history"
 ENV_PATH = ROOT / ".env"
 WATCH_URL = "https://www.youtube.com/watch?v={video_id}"
 LANG_RE = re.compile(r"^[a-z]{2}$|^zh-Hans$|^zh-Hant$")
@@ -63,6 +64,10 @@ def parse_duration_seconds(iso_duration: str | None) -> int | None:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def log(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
 
 
 def api_get(path: str, params: dict[str, str]) -> dict:
@@ -130,48 +135,64 @@ def video_details(api_key: str, video_ids: list[str]) -> dict[str, dict]:
     return details
 
 
-def load_state() -> dict:
-    if not STATE_PATH.exists():
+def atomic_write(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text)
+        tmp.replace(path)
+    except OSError as exc:
+        raise YouTubeAPIError(f"could not write {path}: {exc}") from exc
+
+
+def load_run() -> dict:
+    if not RUN_PATH.exists():
         return {}
     try:
-        data = json.loads(STATE_PATH.read_text())
+        data = json.loads(RUN_PATH.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        raise YouTubeAPIError(f"could not read {STATE_PATH}: {exc}") from exc
+        raise YouTubeAPIError(f"could not read {RUN_PATH}: {exc}") from exc
     if not isinstance(data, dict):
-        raise YouTubeAPIError(f"could not read {STATE_PATH}: expected a JSON object")
+        raise YouTubeAPIError(f"could not read {RUN_PATH}: expected a JSON object")
     return data
 
 
-def save_state(state: dict) -> None:
-    tmp = STATE_PATH.with_name(".search_state.json.tmp")
+def save_run(state: dict) -> None:
+    atomic_write(RUN_PATH, json.dumps(state, indent=2) + "\n")
+
+
+def load_history() -> set[str]:
+    if not HISTORY_PATH.exists():
+        return set()
     try:
-        tmp.write_text(json.dumps(state, indent=2) + "\n")
-        tmp.replace(STATE_PATH)
+        text = HISTORY_PATH.read_text()
     except OSError as exc:
-        raise YouTubeAPIError(f"could not write {STATE_PATH}: {exc}") from exc
+        raise YouTubeAPIError(f"could not read {HISTORY_PATH}: {exc}") from exc
+    return {line.strip() for line in text.splitlines() if line.strip()}
 
 
-def read_cursor(state: dict, lang: str, q: str | None) -> tuple[str, list[str]]:
+def save_history(video_ids: set[str]) -> None:
+    body = "".join(f"{video_id}\n" for video_id in sorted(video_ids))
+    atomic_write(HISTORY_PATH, body)
+
+
+def stored_cursor(state: dict, lang: str, q: str | None) -> str | None:
     key = q if q is not None else ""
     bucket = state.get(lang)
     if not isinstance(bucket, dict):
-        return utc_now(), []
+        return None
     entry = bucket.get(key)
     if not isinstance(entry, dict) or not isinstance(entry.get("published_before"), str):
-        return utc_now(), []
-    raw_ids = entry.get("returned_ids")
-    if not isinstance(raw_ids, list):
-        raw_ids = []
-    return entry["published_before"], [video_id for video_id in raw_ids if isinstance(video_id, str)]
+        return None
+    return entry["published_before"]
 
 
-def write_cursor(state: dict, lang: str, q: str | None, published_before: str, returned_ids: list[str]) -> None:
+def write_cursor(state: dict, lang: str, q: str | None, published_before: str) -> None:
     key = q if q is not None else ""
     bucket = state.get(lang)
     if not isinstance(bucket, dict):
         bucket = {}
         state[lang] = bucket
-    bucket[key] = {"published_before": published_before, "returned_ids": returned_ids}
+    bucket[key] = {"published_before": published_before}
 
 
 def snippet_value(resource: dict | None, key: str) -> str | None:
@@ -186,6 +207,16 @@ def snippet_value(resource: dict | None, key: str) -> str | None:
 
 def published_at(item: dict, detail: dict | None) -> str | None:
     return snippet_value(detail, "publishedAt") or snippet_value(item, "publishedAt")
+
+
+def describe(video_id: str, item: dict, detail: dict | None) -> str:
+    title = snippet_value(detail, "title") or snippet_value(item, "title")
+    if not title:
+        return video_id
+    title = " ".join(title.split())
+    if len(title) > 80:
+        title = title[:77] + "..."
+    return f"{video_id} {title}"
 
 
 def duration_iso(detail: dict | None) -> str | None:
@@ -203,16 +234,18 @@ def collect(
     lang: str,
     q: str | None,
     published_before: str,
-    returned_ids: list[str],
-) -> tuple[list[str], int, int, int, str | None, str | None]:
-    """Return kept ids, language rejects, duration rejects, search calls, new cursor, shortfall reason.
+    history: set[str],
+) -> tuple[list[str], int, int, int, int, str | None, str | None]:
+    """Return kept ids, language rejects, duration rejects, history skips, search calls, new cursor, shortfall reason.
 
     A new cursor of None means the saved cursor should stay where it is (empty page).
+    IDs in history are not output again.
     """
-    seen = set(returned_ids)
+    seen = set(history)
     kept: list[str] = []
     rejected_language = 0
     rejected_duration = 0
+    skipped_history = 0
     search_calls = 0
     page_token: str | None = None
     last_considered: str | None = None
@@ -220,6 +253,11 @@ def collect(
     stop_reason: str | None = None
 
     while len(kept) < TARGET and search_calls < MAX_SEARCH_CALLS:
+        log(
+            f"search {search_calls + 1}/{MAX_SEARCH_CALLS} "
+            f"lang={lang} q={q or '-'} publishedBefore={published_before} "
+            f"pageToken={page_token or '-'}"
+        )
         page = search_page(api_key, lang, q, published_before, page_token)
         search_calls += 1
         items = [item for item in (page.get("items") or []) if isinstance(item, dict)]
@@ -228,11 +266,16 @@ def collect(
             video_id = item.get("id", {}).get("videoId") if isinstance(item.get("id"), dict) else None
             if isinstance(video_id, str):
                 video_ids.append(video_id)
+        log(f"search returned {len(video_ids)} videos")
         if not video_ids:
             stop_reason = "catalog exhausted"
+            log("search page empty; catalog exhausted")
             break
 
+        log(f"videos.list {len(video_ids)} ids")
         details = video_details(api_key, video_ids)
+        if len(details) != len(video_ids):
+            log(f"videos.list returned {len(details)} of {len(video_ids)}")
         reached_target = False
         for item in items:
             item_id = item.get("id")
@@ -241,56 +284,77 @@ def collect(
                 continue
             examined = True
             detail = details.get(video_id)
+            label = describe(video_id, item, detail)
             stamp = published_at(item, detail)
             if stamp:
                 last_considered = stamp
             if video_id in seen:
+                skipped_history += 1
+                log(f"skip {label} already in history")
                 continue
             duration = parse_duration_seconds(duration_iso(detail))
             if duration is None or duration >= SHORTS_MAX_SECONDS:
                 rejected_duration += 1
+                if duration is None:
+                    log(f"reject {label} no duration")
+                else:
+                    log(f"reject {label} duration={duration}s")
                 continue
             audio_language = snippet_value(detail, "defaultAudioLanguage")
             if not language_matches(audio_language, lang):
                 rejected_language += 1
+                log(f"reject {label} audio={audio_language or 'missing'}")
                 continue
             kept.append(video_id)
             seen.add(video_id)
+            log(f"keep {WATCH_URL.format(video_id=video_id)} {duration}s {audio_language} ({len(kept)}/{TARGET})")
             if len(kept) == TARGET:
                 reached_target = True
                 break
         if reached_target:
+            log(f"reached {TARGET} videos")
             break
         next_token = page.get("nextPageToken")
         if not isinstance(next_token, str) or not next_token:
             stop_reason = "catalog exhausted"
+            log("no next page; catalog exhausted")
             break
+        log("continuing to next page")
         page_token = next_token
 
     if len(kept) < TARGET and stop_reason is None:
         stop_reason = f"stopped after {MAX_SEARCH_CALLS} search calls"
+        log(stop_reason)
 
-    # publishedBefore is inclusive, so the next run re-sees the boundary timestamp.
-    # Returned ids are stored and skipped. An empty page leaves the cursor alone.
+    # publishedBefore is inclusive, so the next invocation re-sees the boundary timestamp.
+    # History IDs are not output again. An empty page leaves the cursor alone.
     if last_considered:
         new_cursor = last_considered
     elif examined:
         new_cursor = published_before
     else:
         new_cursor = None
-    return kept, rejected_language, rejected_duration, search_calls, new_cursor, stop_reason
+    return kept, rejected_language, rejected_duration, skipped_history, search_calls, new_cursor, stop_reason
 
 
-def report(kept: int, rejected_language: int, rejected_duration: int, search_calls: int, stop_reason: str | None) -> None:
+def report(
+    kept: int,
+    rejected_language: int,
+    rejected_duration: int,
+    skipped_history: int,
+    search_calls: int,
+    stop_reason: str | None,
+) -> None:
     quota = search_calls * SEARCH_QUOTA_UNITS
     message = (
-        f"kept {kept}, rejected {rejected_language} for language, "
+        f"kept {kept}, skipped {skipped_history} in history, "
+        f"rejected {rejected_language} for language, "
         f"rejected {rejected_duration} for duration, "
         f"search calls {search_calls} ({quota} quota units)"
     )
     if kept < TARGET and stop_reason:
         message += f"; {stop_reason}"
-    print(message, file=sys.stderr)
+    log(message)
 
 
 def main() -> int:
@@ -312,15 +376,34 @@ def main() -> int:
         return 1
 
     try:
-        state = load_state()
-        published_before, returned_ids = read_cursor(state, lang, args.q)
-        kept, rejected_language, rejected_duration, search_calls, new_cursor, stop_reason = collect(
-            api_key, lang, args.q, published_before, returned_ids
+        run = load_run()
+        history = load_history()
+        published_before = stored_cursor(run, lang, args.q)
+        if published_before is None:
+            published_before = utc_now()
+            log(f"no saved cursor for this query; starting at {published_before}")
+        else:
+            log(f"cursor {published_before} from {RUN_PATH}")
+        if HISTORY_PATH.exists():
+            log(f"history {len(history)} ids from {HISTORY_PATH}")
+        else:
+            log(f"no history file {HISTORY_PATH}")
+        kept, rejected_language, rejected_duration, skipped_history, search_calls, new_cursor, stop_reason = collect(
+            api_key, lang, args.q, published_before, history
         )
+        if kept:
+            updated = history | set(kept)
+            save_history(updated)
+            log(f"history {len(history)} -> {len(updated)} ids, wrote {HISTORY_PATH}")
+        else:
+            log("history unchanged")
         if new_cursor is not None:
-            write_cursor(state, lang, args.q, new_cursor, returned_ids + kept)
-            save_state(state)
-        report(len(kept), rejected_language, rejected_duration, search_calls, stop_reason)
+            write_cursor(run, lang, args.q, new_cursor)
+            save_run(run)
+            log(f"cursor {published_before} -> {new_cursor}, wrote {RUN_PATH}")
+        else:
+            log(f"cursor unchanged ({published_before})")
+        report(len(kept), rejected_language, rejected_duration, skipped_history, search_calls, stop_reason)
     except YouTubeAPIError as exc:
         print(str(exc), file=sys.stderr)
         return 1
