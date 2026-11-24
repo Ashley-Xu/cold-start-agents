@@ -95,6 +95,7 @@ def search_page(
     api_key: str,
     lang: str,
     q: str | None,
+    channel_id: str | None,
     published_before: str,
     page_token: str | None,
 ) -> dict:
@@ -111,6 +112,8 @@ def search_page(
     }
     if q is not None:
         params["q"] = q
+    if channel_id is not None:
+        params["channelId"] = channel_id
     if page_token:
         params["pageToken"] = page_token
     return api_get("search", params)
@@ -175,24 +178,30 @@ def save_history(video_ids: set[str]) -> None:
     atomic_write(HISTORY_PATH, body)
 
 
-def stored_cursor(state: dict, lang: str, q: str | None) -> str | None:
-    key = q if q is not None else ""
-    bucket = state.get(lang)
-    if not isinstance(bucket, dict):
+def stored_cursor(state: dict, lang: str, q: str | None, channel_id: str | None) -> str | None:
+    queries = state.get(lang)
+    if not isinstance(queries, dict):
         return None
-    entry = bucket.get(key)
+    channels = queries.get(q or "")
+    if not isinstance(channels, dict):
+        return None
+    entry = channels.get(channel_id or "")
     if not isinstance(entry, dict) or not isinstance(entry.get("published_before"), str):
         return None
     return entry["published_before"]
 
 
-def write_cursor(state: dict, lang: str, q: str | None, published_before: str) -> None:
-    key = q if q is not None else ""
-    bucket = state.get(lang)
-    if not isinstance(bucket, dict):
-        bucket = {}
-        state[lang] = bucket
-    bucket[key] = {"published_before": published_before}
+def write_cursor(state: dict, lang: str, q: str | None, channel_id: str | None, published_before: str) -> None:
+    queries = state.get(lang)
+    if not isinstance(queries, dict):
+        queries = {}
+        state[lang] = queries
+    query_key = q or ""
+    channels = queries.get(query_key)
+    if not isinstance(channels, dict):
+        channels = {}
+        queries[query_key] = channels
+    channels[channel_id or ""] = {"published_before": published_before}
 
 
 def snippet_value(resource: dict | None, key: str) -> str | None:
@@ -233,6 +242,7 @@ def collect(
     api_key: str,
     lang: str,
     q: str | None,
+    channel_id: str | None,
     published_before: str,
     history: set[str],
 ) -> tuple[list[str], int, int, int, int, str | None, str | None]:
@@ -255,10 +265,10 @@ def collect(
     while len(kept) < TARGET and search_calls < MAX_SEARCH_CALLS:
         log(
             f"search {search_calls + 1}/{MAX_SEARCH_CALLS} "
-            f"lang={lang} q={q or '-'} publishedBefore={published_before} "
-            f"pageToken={page_token or '-'}"
+            f"lang={lang} q={q or '-'} channel={channel_id or '-'} "
+            f"publishedBefore={published_before} pageToken={page_token or '-'}"
         )
-        page = search_page(api_key, lang, q, published_before, page_token)
+        page = search_page(api_key, lang, q, channel_id, published_before, page_token)
         search_calls += 1
         items = [item for item in (page.get("items") or []) if isinstance(item, dict)]
         video_ids = []
@@ -362,8 +372,11 @@ def main() -> int:
         description="Search YouTube for captioned Shorts in a language and print their watch URLs."
     )
     parser.add_argument("lang", help="speech language (ISO 639-1, or zh-Hans / zh-Hant)")
-    parser.add_argument("q", nargs="?", help="optional YouTube search query, passed as the q parameter")
+    parser.add_argument("-q", help="YouTube search query, passed as the q parameter")
+    parser.add_argument("-c", help="limit the search to this YouTube channel ID")
     args = parser.parse_args()
+    q = args.q.strip() if args.q and args.q.strip() else None
+    channel_id = args.c.strip() if args.c and args.c.strip() else None
 
     lang = normalize_lang(args.lang)
     if lang is None:
@@ -378,7 +391,7 @@ def main() -> int:
     try:
         run = load_run()
         history = load_history()
-        published_before = stored_cursor(run, lang, args.q)
+        published_before = stored_cursor(run, lang, q, channel_id)
         if published_before is None:
             published_before = utc_now()
             log(f"no saved cursor for this query; starting at {published_before}")
@@ -389,7 +402,7 @@ def main() -> int:
         else:
             log(f"no history file {HISTORY_PATH}")
         kept, rejected_language, rejected_duration, skipped_history, search_calls, new_cursor, stop_reason = collect(
-            api_key, lang, args.q, published_before, history
+            api_key, lang, q, channel_id, published_before, history
         )
         if kept:
             updated = history | set(kept)
@@ -398,7 +411,7 @@ def main() -> int:
         else:
             log("history unchanged")
         if new_cursor is not None:
-            write_cursor(run, lang, args.q, new_cursor)
+            write_cursor(run, lang, q, channel_id, new_cursor)
             save_run(run)
             log(f"cursor {published_before} -> {new_cursor}, wrote {RUN_PATH}")
         else:
