@@ -16,8 +16,8 @@ API_BASE = "https://www.googleapis.com/youtube/v3"
 TARGET = 50
 MAX_SEARCH_CALLS = 20
 SEARCH_QUOTA_UNITS = 100
-# search.list's "short" bucket is under 4 minutes. Match the repo's Shorts cutoff.
-SHORTS_MAX_SECONDS = 60
+# search.list's "short" bucket is under 4 minutes. Keep anything under 2 minutes.
+SHORTS_MAX_SECONDS = 120
 ROOT = Path(__file__).resolve().parent
 RUN_PATH = ROOT / ".search_run"
 HISTORY_PATH = ROOT / ".search_history"
