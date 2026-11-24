@@ -1,7 +1,7 @@
-.search_state.json
-.search_state.json.tmp
 .search_run
 .search_run.tmp
 .search_history
 .search_history.tmp
 .env
+__pycache__
+
